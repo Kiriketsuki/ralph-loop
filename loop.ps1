@@ -1,33 +1,47 @@
-﻿param(
+param(
     [string][ValidateSet("gemini", "claude")]$Engine = "gemini",
     [int]$MaxIterations = 20,
-    [switch]$Push = $true
+    [bool]$Push = $true
 )
 
 # .ralph/loop.ps1 - Headless Ralph Loop Orchestrator (PowerShell)
-# This script runs the agent in a context-free loop until the goal is reached.
+# Run from the project root directory.
+# Usage: .\.ralph\loop.ps1 [-Engine gemini|claude] [-MaxIterations 20] [-Push $true|$false]
 
 $SpecFile = ".ralph/spec.md"
 $PromptFile = ".ralph/prompt.md"
 $LogDir = ".ralph/logs"
 $Iteration = 0
 
+if (-not (Test-Path $SpecFile)) {
+    Write-Error "ERROR: $SpecFile not found. Run from the project root."
+    exit 1
+}
+
+if (-not (Test-Path $PromptFile)) {
+    Write-Error "ERROR: $PromptFile not found. Run from the project root."
+    exit 1
+}
+
+$Branch = git rev-parse --abbrev-ref HEAD 2>$null
+if (-not $Branch) { $Branch = "main" }
+
 if (-not (Test-Path $LogDir)) {
     New-Item -ItemType Directory -Path $LogDir | Out-Null
 }
 
-Write-Host "ðŸš€ Starting Headless Ralph Loop with $Engine..." -ForegroundColor Cyan
+Write-Host "Starting Headless Ralph Loop with $Engine on branch $Branch..."
 
 while ($true) {
     $Iteration++
-    
+
     if ($Iteration -gt $MaxIterations) {
-        Write-Host "âš ï¸ Max iterations reached ($MaxIterations). Stopping loop." -ForegroundColor Yellow
+        Write-Host "WARNING: Max iterations reached ($MaxIterations). Stopping loop."
         exit 1
     }
 
-    Write-Host "--- Iteration $Iteration ---" -ForegroundColor Green
-    
+    Write-Host "--- Iteration $Iteration ---"
+
     $LogFile = "$LogDir/iteration_$Iteration.log"
     $Prompt = Get-Content $PromptFile -Raw
 
@@ -39,18 +53,23 @@ while ($true) {
 
     # Auto-sync to GitHub if there are changes
     if ($Push -and (git status --porcelain)) {
-        Write-Host "ðŸ”„ Syncing changes to GitHub..." -ForegroundColor Gray
+        Write-Host "Syncing changes to GitHub (branch: $Branch)..."
         git add .
-        # Using $($Iteration) to safely interpolate inside here-string
         git commit -m "Ralph Iteration $($Iteration): Automated Progress Sync"
-        git push origin main
+        git push origin $Branch
     }
 
-    # Check for Mission Completion in the spec file
+    # Check for mission completion
     if (Select-String -Path $SpecFile -Pattern "MISSION_COMPLETE" -Quiet) {
-        Write-Host "ðŸŽ‰ Goal Reached! Overall Status: MISSION_COMPLETE" -ForegroundColor Cyan
+        Write-Host "Goal reached. Overall Status: MISSION_COMPLETE"
         exit 0
     }
 
-    Write-Host "Iteration $Iteration complete. Fresh context reload starting..." -ForegroundColor Gray
+    # Check for stuck state: no pending tasks remain but mission not complete
+    if (-not (Select-String -Path $SpecFile -Pattern "\| *pending *\|" -Quiet)) {
+        Write-Host "WARNING: No pending tasks remain but mission is not complete. All tasks may be BLOCKED or FAILED. Stopping loop." -ForegroundColor Yellow
+        exit 2
+    }
+
+    Write-Host "Iteration $Iteration complete. Reloading with fresh context..."
 }
