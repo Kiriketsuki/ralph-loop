@@ -16,13 +16,13 @@
 - [ ] [Criterion 3]
 
 ## Task Matrix
-| ID | Task Description | Priority | Status | Dependencies | Parent |
-|:---|:---|:---|:---|:---|:---|
-| T1 | [Task 1] | High | pending | None | - |
-| T1.1 | [Sub-task 1.1] | High | pending | None | T1 |
-| T1.2 | [Sub-task 1.2] | High | pending | T1.1 | T1 |
-| T2 | [Task 2] | Med | pending | T1 | - |
-| T3 | [Agent-discovered task] | Low | proposed | T1 | - |
+| ID | Task Description | Priority | Impact | Blocking | Risk | Score | Status | Dependencies | Parent |
+|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
+| T1 | [Task 1] | High | 5 | 1 | 2 | 17 | pending | None | - |
+| T1.1 | [Sub-task 1.1] | High | 4 | 0 | 1 | 13 | pending | None | T1 |
+| T1.2 | [Sub-task 1.2] | High | 4 | 0 | 2 | 14 | pending | T1.1 | T1 |
+| T2 | [Task 2] | Med | 3 | 0 | 1 | 10 | pending | T1 | - |
+| T3 | [Agent-discovered task] | Low | 2 | 0 | 1 | 7 | proposed | T1 | - |
 
 ## Technical Constraints
 - [Constraint 1]
@@ -33,6 +33,3 @@
 
 | Timestamp | Severity | Description | Related Task |
 |:---|:---|:---|:---|
-
-## Progress Log
-- **[YYYY-MM-DD HH:MM]**: Mission defined.
