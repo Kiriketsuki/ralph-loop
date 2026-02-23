@@ -68,9 +68,19 @@ while true; do
         exit 0
     fi
 
+    # Check for verification pending -- allow one more iteration
+    if grep -q "VERIFICATION_PENDING" "$SPEC_FILE"; then
+        echo "Verification iteration triggered. Agent will verify acceptance criteria..."
+        continue
+    fi
+
     # Check for stuck state: no pending tasks remain but mission not complete
     if ! grep -qE "\| *pending *\|" "$SPEC_FILE"; then
-        echo "WARNING: No pending tasks remain but mission is not complete. All tasks may be BLOCKED or FAILED. Stopping loop." >&2
+        if grep -qE "\| *proposed *\|" "$SPEC_FILE"; then
+            echo "PAUSED: Proposed tasks require human review. Promote to 'pending' and re-run." >&2
+            exit 3
+        fi
+        echo "WARNING: No pending tasks remain but mission is not complete. Stopping loop." >&2
         exit 2
     fi
 

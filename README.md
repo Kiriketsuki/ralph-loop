@@ -81,6 +81,7 @@ Examples:
 | Value | Meaning |
 |:---|:---|
 | `IN_PROGRESS` | Loop is active |
+| `VERIFICATION_PENDING` | All tasks completed; agent will verify acceptance criteria next iteration |
 | `MISSION_COMPLETE` | All acceptance criteria met; loop exits on next check |
 
 ### Task Status values
@@ -91,6 +92,7 @@ Examples:
 | `completed` | Done successfully |
 | `failed` | Attempted but not achievable |
 | `blocked` | Cannot proceed; dependency or external condition unresolved |
+| `proposed` | Agent-discovered task awaiting human review; not selectable by agent |
 
 ### Task Matrix format
 ```
@@ -107,6 +109,26 @@ Examples:
 - The Dependencies column lists task IDs that must be `completed` before this task can start. Use `None` for tasks with no dependencies.
 - The Parent column lists the parent task ID for sub-tasks. Use `-` for top-level tasks.
 
+### Known Issues format
+```
+## Known Issues
+> Append-only. The agent logs problems, warnings, or concerns detected during work.
+
+| Timestamp | Severity | Description | Related Task |
+|:---|:---|:---|:---|
+| 2025-01-15 10:42 | medium | Test coverage missing for edge case X | T3 |
+```
+
+Severity levels:
+| Level | When to use |
+|:---|:---|
+| `low` | Minor concern; does not affect correctness |
+| `medium` | Potential issue; worth addressing in a follow-up |
+| `high` | Likely to cause failures; should be fixed soon |
+| `critical` | Breaks acceptance criteria or constraints; must be fixed before completion |
+
+Known Issues is **append-only**. Neither the agent nor humans should edit or delete existing rows. Add new rows only.
+
 ---
 
 ## Loop Exit Conditions
@@ -116,6 +138,40 @@ Examples:
 | `MISSION_COMPLETE` in spec | `0` | Success |
 | Max iterations reached | `1` | Safety cap hit -- review logs and raise the limit or fix the spec |
 | No `pending` tasks but not complete | `2` | Stuck -- all remaining tasks are `blocked` or `failed`; human intervention required |
+| Proposed tasks need review | `3` | Agent discovered new tasks; promote `proposed` to `pending` and re-run |
+
+---
+
+## Verification Phase
+
+After all tasks in the Task Matrix reach `completed`, the agent does NOT immediately set `MISSION_COMPLETE`. Instead it sets Overall Status to `VERIFICATION_PENDING` and exits. The loop script detects this and triggers one more iteration.
+
+In the Verification Iteration, the agent walks through every Acceptance Criterion and confirms it is genuinely satisfied -- running tests, checking file outputs, validating constraints. This separates "all tasks done" from "the project actually works".
+
+**Verification pass**: Overall Status becomes `MISSION_COMPLETE`. Loop exits cleanly.
+
+**Verification fail**: Each failed criterion is logged to `## Known Issues`. The agent adds `proposed` fix tasks to the Task Matrix and reverts Overall Status to `IN_PROGRESS`. The loop then exits with code `3`, prompting human review of the proposed tasks.
+
+This two-phase completion prevents silent failures where the agent marks itself done without ever checking the outcome.
+
+---
+
+## Proposed Tasks and Human Review
+
+During any iteration, the agent may discover additional work that was not anticipated in the original spec -- edge cases, test gaps, constraint violations found during verification. Rather than acting autonomously on undiscussed work, the agent adds these to the Task Matrix with status `proposed`.
+
+**Proposed tasks are not selectable.** The agent will never pick up a `proposed` task. They exist only for human review.
+
+When the loop detects no `pending` tasks remain but `proposed` tasks exist, it exits with code `3` and prints:
+
+```
+PAUSED: Proposed tasks require human review. Promote to 'pending' and re-run.
+```
+
+Between runs, open `.ralph/spec.md` and for each `proposed` task either:
+- Promote it to `pending` to have the agent execute it next run.
+- Delete the row if the task is not needed.
+- Modify the description before promoting if the proposal needs adjustment.
 
 ---
 

@@ -65,9 +65,19 @@ while ($true) {
         exit 0
     }
 
+    # Check for verification pending -- allow one more iteration
+    if (Select-String -Path $SpecFile -Pattern "VERIFICATION_PENDING" -Quiet) {
+        Write-Host "Verification iteration triggered. Agent will verify acceptance criteria..."
+        continue
+    }
+
     # Check for stuck state: no pending tasks remain but mission not complete
     if (-not (Select-String -Path $SpecFile -Pattern "\| *pending *\|" -Quiet)) {
-        Write-Host "WARNING: No pending tasks remain but mission is not complete. All tasks may be BLOCKED or FAILED. Stopping loop." -ForegroundColor Yellow
+        if (Select-String -Path $SpecFile -Pattern "\| *proposed *\|" -Quiet) {
+            Write-Error "PAUSED: Proposed tasks require human review. Promote to 'pending' and re-run."
+            exit 3
+        }
+        Write-Host "WARNING: No pending tasks remain but mission is not complete. Stopping loop." -ForegroundColor Yellow
         exit 2
     }
 
