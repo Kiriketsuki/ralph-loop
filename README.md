@@ -187,7 +187,7 @@ Known Issues is **append-only**. Neither the agent nor humans should edit or del
 Task scores are set during the planning session and **never modified by headless agents**. Scores break ties when multiple tasks are eligible (pending + all dependencies met).
 
 ```
-Score = (Impact x 3) + (Blocking x 2) + (Risk x 1)
+Score = (Impact × 3) + (Blocking × 2) + (Risk × 1)
 ```
 
 | Component | Range | Meaning |
