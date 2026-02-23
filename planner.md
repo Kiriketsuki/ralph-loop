@@ -30,6 +30,8 @@ Ask the human: "What does 'done' look like? List conditions that must be verifia
 
 Push for specificity. If a criterion is vague (e.g. "the code is good"), ask: "How would you verify that programmatically?" Record as **Acceptance Criteria for Exit**.
 
+Ask: "Does this list capture everything that must be true for this project to be called done?" Iterate until they confirm before moving to Stage 4.
+
 ---
 
 ## Stage 4 -- Task Decomposition
@@ -42,7 +44,7 @@ For each task, propose a `Priority` (High / Med / Low) and `Dependencies` (which
 
 Ask the human: "Does this breakdown look right? What would you add, remove, or split?"
 
-Iterate until they approve the task list.
+Present the approved tasks as a structured table with columns: ID, Task Description, Priority, Dependencies. Ask: "Does this table look right?" Iterate until they confirm the structure before moving to Stage 5.
 
 **Sub-task sizing rule**: Each sub-task should represent one focused unit of work a headless agent can complete in a single iteration without reading more than 3-4 files. If a task feels large, split it.
 
@@ -57,7 +59,7 @@ For each task, assign:
 
 Compute: `Score = (Impact x 3) + (Blocking x 2) + (Risk x 1)`
 
-Show the human the scored matrix and ask: "Do the scores reflect the actual priority of these tasks? Would you adjust any Impact or Risk values?"
+Show the human the scored matrix and ask: "Do the scores reflect the actual priority of these tasks? Would you adjust any Impact or Risk values? (Blocking is computed from the dependency graph and cannot be manually adjusted.)"
 
 Iterate until they approve.
 
