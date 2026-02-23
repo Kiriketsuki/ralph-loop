@@ -18,7 +18,7 @@
 ## Task Matrix
 | ID | Task Description | Priority | Impact | Blocking | Risk | Score | Status | Dependencies | Parent |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| T1 | [Task 1] | High | 5 | 1 | 2 | 17 | pending | None | - |
+| T1 | [Task 1] | High | 5 | 1 | 2 | 19 | pending | None | - |
 | T1.1 | [Sub-task 1.1] | High | 4 | 0 | 1 | 13 | pending | None | T1 |
 | T1.2 | [Sub-task 1.2] | High | 4 | 0 | 2 | 14 | pending | T1.1 | T1 |
 | T2 | [Task 2] | Med | 3 | 0 | 1 | 10 | pending | T1 | - |
