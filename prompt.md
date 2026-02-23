@@ -17,7 +17,7 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
    - Filter to those whose dependencies are all `completed`.
    - If no `pending` task has all dependencies met, halt with exit condition (see below).
    - **Tiebreaking**: When multiple tasks qualify, select the one with the highest `Score`. If scores are equal, prefer the lowest-numbered task ID.
-   - If sub-tasks exist (e.g., T1.1, T1.2), prefer the lowest-numbered pending sub-task of the highest-scoring parent.
+   - If sub-tasks exist (e.g., T1.1, T1.2), prefer the lowest-numbered pending sub-task of the highest-scoring parent. If a parent task and a standalone task share the same top Score, the lowest task ID wins first, then apply the sub-task rule within that parent.
    - **Log reading**: Do NOT read `.ralph/progress.md`. It is a human audit trail only. You MAY read `.ralph/logs/iteration_N.log` (where N is the iteration number of a direct dependency) if the current task requires consuming output produced by that dependency. Read only the specific log file needed, nothing else.
    - **Verification trigger**: If NO `pending` tasks remain, all tasks are `completed`, and Overall Status is `VERIFICATION_PENDING`, this is a **Verification Iteration**. Skip to Step 5.
 
@@ -29,7 +29,7 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
 
 4. **Verification Check**:
    - After completing a task, check: are ALL tasks in the Task Matrix now `completed`?
-   - If yes: set Overall Status to `VERIFICATION_PENDING` (NOT `MISSION_COMPLETE`). Append to Progress Log: "All tasks completed. Verification iteration required next." Proceed to Mandatory Exit.
+   - If yes: set Overall Status to `VERIFICATION_PENDING` (NOT `MISSION_COMPLETE`). Append to `.ralph/progress.md`: "All tasks completed. Verification iteration required next." Proceed to Mandatory Exit.
    - If no: proceed to Step 6 (Update Spec) normally.
 
 5. **Verification Iteration**:
@@ -38,12 +38,12 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
      - Run tests if criteria mention tests passing.
      - Check file existence, output correctness, or code quality as criteria dictate.
      - Validate no Technical Constraint violations were introduced.
-   - **If all criteria pass**: Set Overall Status to `MISSION_COMPLETE`. Log verification success in Progress Log.
+   - **If all criteria pass**: Set Overall Status to `MISSION_COMPLETE`. Log verification success in `.ralph/progress.md`.
    - **If any criterion fails**:
      - Log each failure in `## Known Issues` with timestamp, severity, description, and related task.
      - Add new tasks to the Task Matrix with status `proposed` to address each failure.
      - Set Overall Status back to `IN_PROGRESS`.
-     - Append summary to Progress Log: "Verification failed. N issues found. N proposed tasks created."
+     - Append summary to `.ralph/progress.md`: "Verification failed. N issues found. N proposed tasks created."
    - Proceed to Mandatory Exit.
 
 6. **Update Spec (Accurate)**:
