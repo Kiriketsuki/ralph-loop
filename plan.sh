@@ -25,8 +25,6 @@ if [ -f "$SPEC_FILE" ]; then
     echo "Proceeding with overwrite..."
 fi
 
-OPENING=$(cat "$PLANNER_FILE")
-
 echo "Starting Ralph Planning Session with $ENGINE..."
 echo "The agent will guide you through goal alignment, constraints, criteria, task decomposition, and scoring."
 echo "spec.md will be written at the end of the session."
@@ -34,16 +32,22 @@ echo "Review spec.md before running: bash .ralph/loop.sh"
 echo ""
 
 if [ "$ENGINE" = "gemini" ]; then
-    gemini "$OPENING"
+    gemini < "$PLANNER_FILE"
 elif [ "$ENGINE" = "claude" ]; then
-    claude "$OPENING"
+    claude < "$PLANNER_FILE"
 elif [ "$ENGINE" = "copilot" ]; then
-    copilot "$OPENING"
+    copilot < "$PLANNER_FILE"
 else
     echo "ERROR: Unknown engine '$ENGINE'. Use 'gemini', 'claude', or 'copilot'." >&2
     exit 1
 fi
 
+ENGINE_EXIT=$?
+
 echo ""
-echo "Planning session ended."
-echo "Next step: review .ralph/spec.md, then run: bash .ralph/loop.sh [engine] [max_iterations] [push]"
+if [ "$ENGINE_EXIT" -eq 0 ]; then
+    echo "Planning session ended."
+    echo "Next step: review .ralph/spec.md, then run: bash .ralph/loop.sh [engine] [max_iterations] [push]"
+else
+    echo "WARNING: Engine exited with code $ENGINE_EXIT. Check that the planning session completed and spec.md was written before running loop.sh." >&2
+fi

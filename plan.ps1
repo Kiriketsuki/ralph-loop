@@ -25,8 +25,6 @@ if (Test-Path $SpecFile) {
     Write-Host "Proceeding with overwrite..."
 }
 
-$Opening = Get-Content $PlannerFile -Raw
-
 Write-Host "Starting Ralph Planning Session with $Engine..."
 Write-Host "The agent will guide you through goal alignment, constraints, criteria, task decomposition, and scoring."
 Write-Host "spec.md will be written at the end of the session."
@@ -34,15 +32,21 @@ Write-Host "Review spec.md before running: .\.ralph\loop.ps1"
 Write-Host ""
 
 switch ($Engine) {
-    "gemini"  { gemini $Opening }
-    "claude"  { claude $Opening }
-    "copilot" { copilot $Opening }
+    "gemini"  { Get-Content $PlannerFile | gemini }
+    "claude"  { Get-Content $PlannerFile | claude }
+    "copilot" { Get-Content $PlannerFile | copilot }
     default {
         Write-Error "ERROR: Unknown engine '$Engine'. Use 'gemini', 'claude', or 'copilot'."
         exit 1
     }
 }
 
+$EngineExit = $LASTEXITCODE
+
 Write-Host ""
-Write-Host "Planning session ended."
-Write-Host "Next step: review .ralph\spec.md, then run: .\.ralph\loop.ps1 [-Engine ...] [-MaxIterations 20] [-Push `$true]"
+if ($EngineExit -eq 0) {
+    Write-Host "Planning session ended."
+    Write-Host "Next step: review .ralph\spec.md, then run: .\.ralph\loop.ps1 [-Engine ...] [-MaxIterations 20] [-Push `$true]"
+} else {
+    Write-Warning "Engine exited with code $EngineExit. Check that the planning session completed and spec.md was written before running loop.ps1."
+}
