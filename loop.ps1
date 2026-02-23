@@ -50,7 +50,7 @@ while ($true) {
     } elseif ($Engine -eq "claude") {
         claude -p "$Prompt" --dangerously-skip-permissions 2>&1 | Tee-Object -FilePath $LogFile
     } elseif ($Engine -eq "copilot") {
-        copilot -p $Prompt --allow-all-tools 2>&1 | Tee-Object -FilePath $LogFile
+        copilot -p "$Prompt" --allow-all-tools 2>&1 | Tee-Object -FilePath $LogFile
     }
 
     # Auto-sync to GitHub if there are changes
