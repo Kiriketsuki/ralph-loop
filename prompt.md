@@ -11,13 +11,14 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
 
 1. **Analyze Spec**: Read `.ralph/spec.md` to understand the global goal, acceptance criteria, technical constraints, and the current state of all tasks.
 
-2. **Task Selection (Strict)**:
+2. **Task Selection (Score-Based)**:
    - Identify all tasks with status `pending`.
    - Ignore tasks with status `proposed` -- these require human review and are not selectable.
    - Filter to those whose dependencies are all `completed`.
-   - If sub-tasks exist (e.g., T1.1, T1.2), prefer the lowest-numbered pending sub-task of the highest-priority parent.
-   - If multiple tasks qualify at the same priority, choose the most logical next step given the global goal.
    - If no `pending` task has all dependencies met, halt with exit condition (see below).
+   - **Tiebreaking**: When multiple tasks qualify, select the one with the highest `Score`. If scores are equal, prefer the lowest-numbered task ID.
+   - If sub-tasks exist (e.g., T1.1, T1.2), prefer the lowest-numbered pending sub-task of the highest-scoring parent.
+   - **Log reading**: Do NOT read `.ralph/progress.md`. It is a human audit trail only. You MAY read `.ralph/logs/iteration_N.log` (where N is the iteration number of a direct dependency) if the current task requires consuming output produced by that dependency. Read only the specific log file needed, nothing else.
    - **Verification trigger**: If NO `pending` tasks remain, all tasks are `completed`, and Overall Status is `VERIFICATION_PENDING`, this is a **Verification Iteration**. Skip to Step 5.
 
 3. **Perform Work (Surgical Step)**:
@@ -50,7 +51,7 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
    - If all sub-tasks for a parent task (e.g., all T1.x tasks) are `completed`, set the parent task (T1) to `completed`.
    - Increment **Current Iteration** by 1.
    - Update **Last Update** to the current timestamp.
-   - Add a concise entry to the **Progress Log** summarizing what was done.
+   - Append a concise entry to `.ralph/progress.md` summarizing what was done. Format: `- **[YYYY-MM-DD HH:MM]** (Iteration N): [one-line summary]`. This file is append-only -- add a new line at the end, never edit existing lines.
    - If issues were observed during work, append an entry to `## Known Issues` with timestamp, severity (low/medium/high/critical), description, and related task ID. Known Issues is append-only.
    - If you discover additional work needed (edge cases, test gaps, refactoring), add tasks to the Task Matrix with status `proposed` and the next available ID. Document the reason in the Progress Log.
 
