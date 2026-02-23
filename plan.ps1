@@ -1,9 +1,10 @@
 # .ralph/plan.ps1 - Interactive Ralph Loop Planning Session (PowerShell)
 # Run from the project root directory.
-# Usage: .\.ralph\plan.ps1 [-Engine gemini|claude|copilot]
+# Usage: .\.ralph\plan.ps1 [-Engine gemini|claude|copilot] [-Model <model-id>]
 
 param(
-    [string][ValidateSet("gemini", "claude", "copilot")]$Engine = "gemini"
+    [string][ValidateSet("gemini", "claude", "copilot")]$Engine = "gemini",
+    [string]$Model = ""
 )
 
 $SpecFile = ".ralph/spec.md"
@@ -31,10 +32,13 @@ Write-Host "spec.md will be written at the end of the session."
 Write-Host "Review spec.md before running: .\.ralph\loop.ps1"
 Write-Host ""
 
+$ModelArgs = @()
+if ($Model) { $ModelArgs = @("--model", $Model) }
+
 switch ($Engine) {
-    "gemini"  { Get-Content $PlannerFile | gemini }
-    "claude"  { Get-Content $PlannerFile | claude }
-    "copilot" { Get-Content $PlannerFile | copilot }
+    "gemini"  { Get-Content $PlannerFile | gemini @ModelArgs }
+    "claude"  { Get-Content $PlannerFile | claude @ModelArgs }
+    "copilot" { Get-Content $PlannerFile | copilot @ModelArgs }
     default {
         Write-Error "ERROR: Unknown engine '$Engine'. Use 'gemini', 'claude', or 'copilot'."
         exit 1

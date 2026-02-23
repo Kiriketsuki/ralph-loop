@@ -2,10 +2,15 @@
 
 # .ralph/plan.sh - Interactive Ralph Loop Planning Session
 # Run from the project root directory.
-# Usage: bash .ralph/plan.sh [engine]
+# Usage: bash .ralph/plan.sh [engine] [model]
 #   engine: gemini | claude | copilot (default: gemini)
+#   model:  model ID to pass to the engine (default: engine default)
 
 ENGINE=${1:-"gemini"}
+MODEL=${2:-""}
+
+MODEL_ARGS=()
+[ -n "$MODEL" ] && MODEL_ARGS=("--model" "$MODEL")
 SPEC_FILE=".ralph/spec.md"
 PLANNER_FILE=".ralph/planner.md"
 
@@ -32,11 +37,11 @@ echo "Review spec.md before running: bash .ralph/loop.sh"
 echo ""
 
 if [ "$ENGINE" = "gemini" ]; then
-    gemini < "$PLANNER_FILE"
+    gemini "${MODEL_ARGS[@]}" < "$PLANNER_FILE"
 elif [ "$ENGINE" = "claude" ]; then
-    claude < "$PLANNER_FILE"
+    claude "${MODEL_ARGS[@]}" < "$PLANNER_FILE"
 elif [ "$ENGINE" = "copilot" ]; then
-    copilot < "$PLANNER_FILE"
+    copilot "${MODEL_ARGS[@]}" < "$PLANNER_FILE"
 else
     echo "ERROR: Unknown engine '$ENGINE'. Use 'gemini', 'claude', or 'copilot'." >&2
     exit 1

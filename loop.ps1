@@ -1,12 +1,13 @@
 param(
     [string][ValidateSet("gemini", "claude", "copilot")]$Engine = "gemini",
     [int]$MaxIterations = 20,
-    [bool]$Push = $true
+    [bool]$Push = $true,
+    [string]$Model = ""
 )
 
 # .ralph/loop.ps1 - Headless Ralph Loop Orchestrator (PowerShell)
 # Run from the project root directory.
-# Usage: .\.ralph\loop.ps1 [-Engine gemini|claude|copilot] [-MaxIterations 20] [-Push $true|$false]
+# Usage: .\.ralph\loop.ps1 [-Engine gemini|claude|copilot] [-MaxIterations 20] [-Push $true|$false] [-Model <model-id>]
 
 $SpecFile = ".ralph/spec.md"
 $PromptFile = ".ralph/prompt.md"
@@ -44,13 +45,15 @@ while ($true) {
 
     $LogFile = "$LogDir/iteration_$Iteration.log"
     $Prompt = Get-Content $PromptFile -Raw
+    $ModelArgs = @()
+    if ($Model) { $ModelArgs = @("--model", $Model) }
 
     if ($Engine -eq "gemini") {
-        gemini -p "$Prompt" -y 2>&1 | Tee-Object -FilePath $LogFile
+        gemini -p "$Prompt" -y @ModelArgs 2>&1 | Tee-Object -FilePath $LogFile
     } elseif ($Engine -eq "claude") {
-        claude -p "$Prompt" --dangerously-skip-permissions 2>&1 | Tee-Object -FilePath $LogFile
+        claude -p "$Prompt" --dangerously-skip-permissions @ModelArgs 2>&1 | Tee-Object -FilePath $LogFile
     } elseif ($Engine -eq "copilot") {
-        copilot -p "$Prompt" --allow-all-tools 2>&1 | Tee-Object -FilePath $LogFile
+        copilot -p "$Prompt" --allow-all-tools @ModelArgs 2>&1 | Tee-Object -FilePath $LogFile
     } else {
         Write-Error "ERROR: Unknown engine '$Engine'. Use 'gemini', 'claude', or 'copilot'."
         exit 1
