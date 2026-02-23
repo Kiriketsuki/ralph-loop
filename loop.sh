@@ -3,7 +3,7 @@
 # .ralph/loop.sh - Headless Ralph Loop Orchestrator (Bash)
 # Run from the project root directory.
 # Usage: bash .ralph/loop.sh [engine] [max_iterations] [push]
-#   engine:         gemini | claude (default: gemini)
+#   engine:         gemini | claude | copilot (default: gemini)
 #   max_iterations: integer (default: 20)
 #   push:           true | false (default: true)
 
@@ -49,8 +49,10 @@ while true; do
         gemini -p "$PROMPT" -y 2>&1 | tee "$LOG_FILE"
     elif [ "$ENGINE" = "claude" ]; then
         claude -p "$PROMPT" --dangerously-skip-permissions 2>&1 | tee "$LOG_FILE"
+    elif [ "$ENGINE" = "copilot" ]; then
+        copilot -p "$PROMPT" --allow-all-tools 2>&1 | tee "$LOG_FILE"
     else
-        echo "ERROR: Unknown engine '$ENGINE'. Use 'gemini' or 'claude'." >&2
+        echo "ERROR: Unknown engine '$ENGINE'. Use 'gemini', 'claude', or 'copilot'." >&2
         exit 1
     fi
 
