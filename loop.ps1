@@ -51,6 +51,9 @@ while ($true) {
         claude -p "$Prompt" --dangerously-skip-permissions 2>&1 | Tee-Object -FilePath $LogFile
     } elseif ($Engine -eq "copilot") {
         copilot -p "$Prompt" --allow-all-tools 2>&1 | Tee-Object -FilePath $LogFile
+    } else {
+        Write-Error "ERROR: Unknown engine '$Engine'. Use 'gemini', 'claude', or 'copilot'."
+        exit 1
     }
 
     # Auto-sync to GitHub if there are changes

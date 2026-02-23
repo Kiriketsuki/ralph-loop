@@ -57,7 +57,7 @@ For each task, assign:
 - **Risk** (1-3): How uncertain or complex is the implementation? 3 = novel or risky. 1 = straightforward.
 - **Blocking** (0-N): Count how many other tasks list this task's ID in their Dependencies column. Compute this from the task matrix -- do not estimate.
 
-Compute: `Score = (Impact x 3) + (Blocking x 2) + (Risk x 1)`
+Compute: `Score = (Impact × 3) + (Blocking × 2) + (Risk × 1)`
 
 Show the human the scored matrix and ask: "Do the scores reflect the actual priority of these tasks? Would you adjust any Impact or Risk values? (Blocking is computed from the dependency graph and cannot be manually adjusted.)"
 

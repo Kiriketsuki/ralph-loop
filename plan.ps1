@@ -3,11 +3,11 @@
 # Usage: .\.ralph\plan.ps1 [-Engine gemini|claude|copilot]
 
 param(
-    [string]$Engine = "gemini"
+    [string][ValidateSet("gemini", "claude", "copilot")]$Engine = "gemini"
 )
 
-$SpecFile = ".ralph\spec.md"
-$PlannerFile = ".ralph\planner.md"
+$SpecFile = ".ralph/spec.md"
+$PlannerFile = ".ralph/planner.md"
 
 if (-not (Test-Path $PlannerFile)) {
     Write-Error "ERROR: $PlannerFile not found. Run from the project root."
@@ -46,7 +46,7 @@ $EngineExit = $LASTEXITCODE
 Write-Host ""
 if ($EngineExit -eq 0) {
     Write-Host "Planning session ended."
-    Write-Host "Next step: review .ralph\spec.md, then run: .\.ralph\loop.ps1 [-Engine ...] [-MaxIterations 20] [-Push `$true]"
+    Write-Host "Next step: review .ralph/spec.md, then run: .\.ralph\loop.ps1 [-Engine ...] [-MaxIterations 20] [-Push `$true]"
 } else {
     Write-Warning "Engine exited with code $EngineExit. Check that the planning session completed and spec.md was written before running loop.ps1."
 }
