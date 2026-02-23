@@ -17,6 +17,41 @@ Each agent invocation starts with no memory of prior sessions. The spec file is 
 
 ---
 
+## Two-Phase Model
+
+Ralph operates in two distinct phases. **Never run `loop.sh` before completing a planning session.**
+
+### Phase 1 -- Planning
+
+```bash
+bash .ralph/plan.sh [engine]
+```
+
+Launches an interactive session with the planning agent (`planner.md`). The agent conducts a structured Q&A -- goal alignment, constraints, acceptance criteria, task decomposition, and scoring -- then writes a complete `.ralph/spec.md`.
+
+After the session ends, **review `spec.md` manually** before proceeding.
+
+| Argument | Values | Default |
+|:---|:---|:---|
+| engine | `gemini`, `claude`, or `copilot` | `gemini` |
+
+**Overwrite guard**: If `spec.md` already exists, `plan.sh` will prompt before overwriting. This prevents clobbering a live or completed spec.
+
+**PowerShell:**
+```powershell
+.\.ralph\plan.ps1 [-Engine gemini|claude|copilot]
+```
+
+### Phase 2 -- Execution
+
+```bash
+bash .ralph/loop.sh [engine] [max_iterations] [push]
+```
+
+Runs the headless loop. Each iteration: reads spec, selects the highest-scored eligible task, executes it, updates spec and `progress.md`, commits, exits. Repeats until `MISSION_COMPLETE`, max iterations, or stuck state.
+
+---
+
 ## Directory Structure
 
 Copy this template into a `.ralph/` folder at your project root before starting:
@@ -24,10 +59,14 @@ Copy this template into a `.ralph/` folder at your project root before starting:
 ```
 <project-root>/
   .ralph/
-    spec.md       # Project specification and live state -- edit before starting
-    prompt.md     # Agent instructions -- copy as-is, do not modify
+    spec.md       # Project specification and live state -- produced by plan.sh
+    prompt.md     # Headless agent instructions -- copy as-is, do not modify
+    planner.md    # Planning agent instructions (six-stage Q&A, produces scored spec.md)
+    plan.sh       # Interactive planning session (Bash)
+    plan.ps1      # Interactive planning session (PowerShell)
     loop.sh       # Bash orchestrator
     loop.ps1      # PowerShell orchestrator
+    progress.md   # Append-only progress log (never read by headless agents)
     logs/         # Per-iteration agent output logs (auto-created at runtime)
 ```
 
@@ -36,12 +75,8 @@ Copy this template into a `.ralph/` folder at your project root before starting:
 ## Setup
 
 1. Copy the contents of this template folder into `<project-root>/.ralph/`.
-2. Edit `.ralph/spec.md`:
-   - Write the **Global Goal** as a single, unambiguous mission statement.
-   - Define measurable **Acceptance Criteria for Exit** (these drive `MISSION_COMPLETE`).
-   - Populate the **Task Matrix** with all known tasks and sub-tasks (see format below).
-   - List all **Technical Constraints** the agent must obey every iteration.
-3. Run the loop from the project root.
+2. Run `bash .ralph/plan.sh [engine]` to start the planning session. The agent will guide you through the spec.
+3. Review `.ralph/spec.md` after the planning session ends, then run `loop.sh`.
 
 ---
 
@@ -53,7 +88,7 @@ bash .ralph/loop.sh [engine] [max_iterations] [push]
 ```
 | Argument | Values | Default |
 |:---|:---|:---|
-| engine | `gemini` or `claude` | `gemini` |
+| engine | `gemini`, `claude`, or `copilot` | `gemini` |
 | max_iterations | any integer | `20` |
 | push | `true` or `false` | `true` |
 
@@ -61,16 +96,18 @@ Examples:
 ```bash
 bash .ralph/loop.sh claude 15 true
 bash .ralph/loop.sh gemini 20 false
+bash .ralph/loop.sh copilot 10 true
 ```
 
 **PowerShell:**
 ```powershell
-.\.ralph\loop.ps1 [-Engine gemini|claude] [-MaxIterations 20] [-Push $true|$false]
+.\.ralph\loop.ps1 [-Engine gemini|claude|copilot] [-MaxIterations 20] [-Push $true|$false]
 ```
 Examples:
 ```powershell
 .\.ralph\loop.ps1 -Engine claude -MaxIterations 15
 .\.ralph\loop.ps1 -Engine gemini -Push $false
+.\.ralph\loop.ps1 -Engine copilot -MaxIterations 10
 ```
 
 ---
@@ -95,19 +132,33 @@ Examples:
 | `proposed` | Agent-discovered task awaiting human review; not selectable by agent |
 
 ### Task Matrix format
+
+The Task Matrix has ten columns:
+
 ```
-| ID   | Task Description     | Priority | Status  | Dependencies | Parent |
-|:-----|:---------------------|:---------|:--------|:-------------|:-------|
-| T1   | Parent task          | High     | pending | None         | -      |
-| T1.1 | First sub-task       | High     | pending | None         | T1     |
-| T1.2 | Second sub-task      | High     | pending | T1.1         | T1     |
-| T2   | Another parent task  | Med      | pending | T1           | -      |
+| ID | Task Description | Priority | Impact | Blocking | Risk | Score | Status | Dependencies | Parent |
+|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
+| T1   | Parent task          | High | 4 | 2 | 2 | 18 | pending | None | -  |
+| T1.1 | First sub-task       | High | 5 | 0 | 1 | 16 | pending | None | T1 |
+| T1.2 | Second sub-task      | High | 3 | 1 | 2 | 13 | pending | T1.1 | T1 |
+| T2   | Another parent task  | Med  | 3 | 0 | 1 | 10 | pending | T1   | -  |
 ```
 
 - Sub-task IDs use dot notation: `T1.1`, `T1.2`.
 - A parent task is only marked `completed` when all its sub-tasks are `completed`.
 - The Dependencies column lists task IDs that must be `completed` before this task can start. Use `None` for tasks with no dependencies.
 - The Parent column lists the parent task ID for sub-tasks. Use `-` for top-level tasks.
+- Impact, Blocking, Risk, and Score are set during the planning session and never modified by headless agents.
+
+### Progress Log
+
+Progress is written to `.ralph/progress.md` (a separate file), not inside `spec.md`. Each iteration the headless agent appends one line:
+
+```
+- **[YYYY-MM-DD HH:MM]** (Iteration N): [one-line summary of what was done]
+```
+
+Headless agents never read `progress.md` -- it is a human audit trail only.
 
 ### Known Issues format
 ```
@@ -128,6 +179,24 @@ Severity levels:
 | `critical` | Breaks acceptance criteria or constraints; must be fixed before completion |
 
 Known Issues is **append-only**. Neither the agent nor humans should edit or delete existing rows. Add new rows only.
+
+---
+
+## Scoring System
+
+Task scores are set during the planning session and **never modified by headless agents**. Scores break ties when multiple tasks are eligible (pending + all dependencies met).
+
+```
+Score = (Impact x 3) + (Blocking x 2) + (Risk x 1)
+```
+
+| Component | Range | Meaning |
+|:---|:---|:---|
+| Impact | 1-5 | How directly does this task satisfy an acceptance criterion? |
+| Blocking | 0-N | How many other pending tasks list this as a dependency? (computed from task matrix) |
+| Risk | 1-3 | How uncertain or complex is the implementation? Higher-risk tasks done early surface problems sooner. |
+
+Higher score = selected first. Within equal scores, lowest task ID wins. If a parent task and a standalone task share the same top score, the lowest task ID wins first, then the sub-task rule applies within that parent.
 
 ---
 
@@ -195,7 +264,7 @@ Constraints are enforced every iteration. Make them specific and non-contradicto
 The agent uses these to decide when to set `MISSION_COMPLETE`. Vague criteria like "the code is good" will not work. Prefer: "All tests pass", "Feature X produces output Y given input Z".
 
 **The Progress Log is append-only.**
-Each iteration adds one entry. The agent must not modify past entries. This log is the audit trail for the entire run.
+Each iteration adds one entry to `progress.md`. The agent must not modify past entries. This log is the audit trail for the entire run. Headless agents never read it.
 
 **Human checkpoints.**
 After the loop exits (any condition), review `.ralph/spec.md` and `.ralph/logs/` before re-running. The spec is your resume point -- correct any inaccurate task statuses before restarting the loop.
