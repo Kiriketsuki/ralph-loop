@@ -53,7 +53,7 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
    - Update **Last Update** to the current timestamp.
    - Append a concise entry to `.ralph/progress.md` summarizing what was done. Format: `- **[YYYY-MM-DD HH:MM]** (Iteration N): [one-line summary]`. This file is append-only -- add a new line at the end, never edit existing lines.
    - If issues were observed during work, append an entry to `## Known Issues` with timestamp, severity (low/medium/high/critical), description, and related task ID. Known Issues is append-only.
-   - If you discover additional work needed (edge cases, test gaps, refactoring), add tasks to the Task Matrix with status `proposed` and the next available ID. Document the reason in the Progress Log.
+   - If you discover additional work needed (edge cases, test gaps, refactoring), add tasks to the Task Matrix with status `proposed` and the next available ID. Document the reason in `.ralph/progress.md`.
 
 7. **MANDATORY EXIT**:
    - After completing ONE task and updating the spec, you MUST stop and exit the session immediately.
@@ -61,7 +61,7 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
 
 ## Blocked or Stuck State
 If you cannot proceed because all remaining `pending` tasks are blocked by unresolved dependencies or external conditions:
-- Mark each blocked task as `blocked` in the spec and document the reason in the Progress Log.
+- Mark each blocked task as `blocked` in the spec and document the reason in `.ralph/progress.md`.
 - Do NOT attempt to invent workarounds that violate Technical Constraints.
 - Exit. The loop script will detect that no `pending` tasks remain and terminate with a stuck-state warning.
 
@@ -69,6 +69,6 @@ If you cannot proceed because all remaining `pending` tasks are blocked by unres
 - **One Task Per Turn**: Never perform multiple tasks in a single iteration. This ensures clean git history and fresh context each iteration.
 - **Fresh Context**: Do not refer to memory from previous sessions. Use only the files on disk.
 - **Surgical Changes**: Minimize noise. Only modify what is necessary for the current task.
-- **No Hallucination**: If a task is impossible or blocked, mark it `blocked` in the spec and explain why in the Progress Log. Never fabricate results.
+- **No Hallucination**: If a task is impossible or blocked, mark it `blocked` in the spec and explain why in `.ralph/progress.md`. Never fabricate results.
 - **Proposed Tasks Are Read-Only**: Never select or work on a `proposed` task. Only humans can promote `proposed` to `pending`.
 - **Verification Is Mandatory**: Never set `MISSION_COMPLETE` directly from a regular task iteration. Always go through `VERIFICATION_PENDING` first.
