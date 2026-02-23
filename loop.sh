@@ -19,7 +19,7 @@ MODEL_ARGS=()
 SPEC_FILE=".ralph/spec.md"
 PROMPT_FILE=".ralph/prompt.md"
 LOG_DIR=".ralph/logs"
-ITERATION=0
+ITERATION=0  # will be overwritten from spec after validation
 
 if [ ! -f "$SPEC_FILE" ]; then
     echo "ERROR: $SPEC_FILE not found. Run from the project root." >&2
@@ -35,7 +35,11 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 mkdir -p "$LOG_DIR"
 
-echo "Starting Headless Ralph Loop with $ENGINE on branch $BRANCH..."
+# Seed iteration counter from spec so resuming a session continues numbering correctly
+ITERATION=$(grep -oP '(?<=\*\*Current Iteration\*\*: )\d+' "$SPEC_FILE" 2>/dev/null || echo 0)
+ITERATION=${ITERATION:-0}
+
+echo "Starting Headless Ralph Loop with $ENGINE on branch $BRANCH (resuming from iteration $ITERATION)..."
 
 while true; do
     ITERATION=$((ITERATION + 1))
@@ -51,11 +55,11 @@ while true; do
     PROMPT=$(cat "$PROMPT_FILE")
 
     if [ "$ENGINE" = "gemini" ]; then
-        gemini -p "$PROMPT" -y "${MODEL_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+        gemini -p "$PROMPT" -y "${MODEL_ARGS[@]}" 2>&1 | stdbuf -oL tee "$LOG_FILE"
     elif [ "$ENGINE" = "claude" ]; then
-        claude -p "$PROMPT" --dangerously-skip-permissions "${MODEL_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+        claude -p "$PROMPT" --dangerously-skip-permissions "${MODEL_ARGS[@]}" 2>&1 | stdbuf -oL tee "$LOG_FILE"
     elif [ "$ENGINE" = "copilot" ]; then
-        copilot -p "$PROMPT" --allow-all-tools "${MODEL_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+        copilot -p "$PROMPT" --allow-all-tools "${MODEL_ARGS[@]}" 2>&1 | stdbuf -oL tee "$LOG_FILE"
     else
         echo "ERROR: Unknown engine '$ENGINE'. Use 'gemini', 'claude', or 'copilot'." >&2
         exit 1
@@ -70,13 +74,13 @@ while true; do
     fi
 
     # Check for mission completion
-    if grep -q "MISSION_COMPLETE" "$SPEC_FILE"; then
+    if grep -qE "\*\*Overall Status\*\*:\s*MISSION_COMPLETE" "$SPEC_FILE"; then
         echo "Goal reached. Overall Status: MISSION_COMPLETE"
         exit 0
     fi
 
     # Check for verification pending -- allow one more iteration
-    if grep -q "VERIFICATION_PENDING" "$SPEC_FILE"; then
+    if grep -qE "\*\*Overall Status\*\*:\s*VERIFICATION_PENDING" "$SPEC_FILE"; then
         echo "Verification iteration triggered. Agent will verify acceptance criteria..."
         continue
     fi
