@@ -14,6 +14,9 @@ export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:$PATH"
 # Source nvm to add nvm-managed binaries (e.g. gemini) to PATH.
 # shellcheck disable=SC1091
 [ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
+# Raise the per-response output token ceiling so agents can write large files
+# (e.g. standalone HTML design system) without hitting the 32K default cap.
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
 
 # Trap Ctrl+C / SIGTERM so the loop exits cleanly without leaving the terminal in a
 # broken state. Claude reads from stdin by default (setting raw mode); the </dev/null
