@@ -15,6 +15,11 @@ export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:$PATH"
 # shellcheck disable=SC1091
 [ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
 
+# Trap Ctrl+C / SIGTERM so the loop exits cleanly without leaving the terminal in a
+# broken state. Claude reads from stdin by default (setting raw mode); the </dev/null
+# redirect below breaks that attachment, but the trap ensures a clean exit regardless.
+trap 'printf "\n"; echo "Loop interrupted."; exit 130' INT TERM
+
 ENGINE=${1:-"gemini"}
 MAX_ITERATIONS=${2:-20}
 PUSH_CHANGES=${3:-true}
@@ -55,6 +60,25 @@ fi
 ITERATION=$(grep -oP '(?<=\*\*Current Iteration\*\*: )\d+' "$SPEC_FILE" 2>/dev/null || echo 0)
 ITERATION=${ITERATION:-0}
 
+# On a fresh loop (iteration 0), create a dedicated ralph/<slug> branch so each
+# project gets its own branch and the main branch stays clean.
+if [ "$ITERATION" -eq 0 ]; then
+    PROJECT_SLUG=$(grep -m1 "^# Ralph Project Specification:" "$SPEC_FILE" \
+        | sed 's/^# Ralph Project Specification: //' \
+        | tr '[:upper:]' '[:lower:]' \
+        | tr -cs '[:alnum:]' '-' \
+        | sed 's/^-//;s/-$//')
+    RALPH_BRANCH="ralph/${PROJECT_SLUG:-loop}"
+    if git rev-parse --verify "$RALPH_BRANCH" &>/dev/null; then
+        echo "Branch $RALPH_BRANCH already exists. Switching to it..."
+        git checkout "$RALPH_BRANCH"
+    else
+        echo "Fresh loop detected (iteration 0). Creating branch $RALPH_BRANCH from $BRANCH..."
+        git checkout -b "$RALPH_BRANCH"
+    fi
+    BRANCH="$RALPH_BRANCH"
+fi
+
 echo "Starting Headless Ralph Loop with $ENGINE on branch $BRANCH (resuming from iteration $ITERATION)..."
 
 while true; do
@@ -76,7 +100,7 @@ while true; do
         if [ "$JQ_AVAILABLE" = "true" ]; then
             # stream-json emits newline-delimited JSON events as they are produced,
             # enabling real-time output. jq extracts assistant text and tool names.
-            claude -p "$PROMPT" --dangerously-skip-permissions --output-format stream-json --verbose "${MODEL_ARGS[@]}" 2>&1 | \
+            claude -p "$PROMPT" --dangerously-skip-permissions --output-format stream-json --verbose "${MODEL_ARGS[@]}" </dev/null 2>&1 | \
                 while IFS= read -r line; do
                     printf '%s\n' "$line" >> "$LOG_FILE"
                     printf '%s\n' "$line" | jq -rj '
@@ -88,7 +112,7 @@ while true; do
                     ' 2>/dev/null
                 done
         else
-            claude -p "$PROMPT" --dangerously-skip-permissions "${MODEL_ARGS[@]}" 2>&1 | stdbuf -oL tee "$LOG_FILE"
+            claude -p "$PROMPT" --dangerously-skip-permissions "${MODEL_ARGS[@]}" </dev/null 2>&1 | stdbuf -oL tee "$LOG_FILE"
         fi
     elif [ "$ENGINE" = "copilot" ]; then
         copilot -p "$PROMPT" --allow-all-tools "${MODEL_ARGS[@]}" 2>&1 | stdbuf -oL tee "$LOG_FILE"
