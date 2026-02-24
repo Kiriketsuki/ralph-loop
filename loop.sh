@@ -76,7 +76,7 @@ while true; do
         if [ "$JQ_AVAILABLE" = "true" ]; then
             # stream-json emits newline-delimited JSON events as they are produced,
             # enabling real-time output. jq extracts assistant text and tool names.
-            claude -p "$PROMPT" --dangerously-skip-permissions --output-format stream-json "${MODEL_ARGS[@]}" 2>&1 | \
+            claude -p "$PROMPT" --dangerously-skip-permissions --output-format stream-json --verbose "${MODEL_ARGS[@]}" 2>&1 | \
                 while IFS= read -r line; do
                     printf '%s\n' "$line" >> "$LOG_FILE"
                     printf '%s\n' "$line" | jq -rj '
