@@ -102,9 +102,9 @@ while true; do
         echo "Syncing changes to GitHub (branch: $BRANCH)..."
         # Build semantic commit message from the progress entry the agent just wrote.
         # Expected format: - **[YYYY-MM-DD HH:MM]** (Iteration N) [type]: summary
-        PROGRESS_LINE=$(grep -m1 "(Iteration $ITERATION) \[[a-z]*\]:" ".ralph/progress.md" 2>/dev/null || true)
-        COMMIT_TYPE=$(printf '%s' "$PROGRESS_LINE" | sed -n 's/.*\[\([a-z]*\)\]:.*/\1/p')
-        COMMIT_SUMMARY=$(printf '%s' "$PROGRESS_LINE" | sed 's/.*\[[a-z]*\]: //')
+        PROGRESS_LINE=$(grep -m1 "(Iteration $ITERATION) [a-z]*:" ".ralph/progress.md" 2>/dev/null || true)
+        COMMIT_TYPE=$(printf '%s' "$PROGRESS_LINE" | sed -n 's/.*Iteration [0-9]*) \([a-z]*\):.*/\1/p')
+        COMMIT_SUMMARY=$(printf '%s' "$PROGRESS_LINE" | sed 's/.*Iteration [0-9]*) [a-z]*: //')
         COMMIT_TYPE=${COMMIT_TYPE:-"chore"}
         COMMIT_SUMMARY=${COMMIT_SUMMARY:-"Iteration $ITERATION automated progress sync"}
         git add .
