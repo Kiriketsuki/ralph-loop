@@ -51,11 +51,33 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
    - If all sub-tasks for a parent task (e.g., all T1.x tasks) are `completed`, set the parent task (T1) to `completed`.
    - Increment **Current Iteration** by 1.
    - Update **Last Update** to the current timestamp.
-   - Append a concise entry to `.ralph/progress.md` summarizing what was done. Format: `- **[YYYY-MM-DD HH:MM]** (Iteration N): [one-line summary]`. This file is append-only -- add a new line at the end, never edit existing lines.
+   - Append a concise entry to `.ralph/progress.md` summarizing what was done. Format: `- **[YYYY-MM-DD HH:MM]** (Iteration N) [type]: [one-line summary]`. The `type` field must be one of: `feat` (new capability), `fix` (bug correction), `refactor` (restructure without behaviour change), `test` (test additions only), `docs` (documentation only), `chore` (maintenance, config, tooling). This file is append-only -- add a new line at the end, never edit existing lines.
    - If issues were observed during work, append an entry to `## Known Issues` with timestamp, severity (low/medium/high/critical), description, and related task ID. Known Issues is append-only.
    - If you discover additional work needed (edge cases, test gaps, refactoring), add tasks to the Task Matrix with status `proposed` and the next available ID. Document the reason in `.ralph/progress.md`.
 
-7. **MANDATORY EXIT**:
+7. **Write Changelog Entry (Educational)**:
+   - Append to `.ralph/changelog.md` one entry documenting what this iteration introduced.
+   - Format exactly as:
+     ```
+     ## Iteration N - YYYY-MM-DD HH:MM
+     **Task**: T1.1 - [Task Description]
+
+     ### Introduced
+     | Item | Type | File | Purpose |
+     |:---|:---|:---|:---|
+     | `functionName(params)` | function | `src/file.ts` | One-line explanation of what it does |
+
+     ### Design Notes
+     - Why this approach was chosen over alternatives.
+     - Any patterns or conventions this follows.
+
+     ---
+     ```
+   - Include every new function, class, interface, type alias, constant, module, or configuration key introduced by this task. If no new items were added (e.g. a deletion task), write "No new items introduced."
+   - Explanations should be concise but educational -- assume the reader knows the domain but is unfamiliar with this specific codebase.
+   - Headless agents never read `.ralph/changelog.md`. It is for human review only. Do not reference it elsewhere.
+
+8. **MANDATORY EXIT**:
    - After completing ONE task and updating the spec, you MUST stop and exit the session immediately.
    - The only exception is reaching `MISSION_COMPLETE` or completing the Verification Iteration, in which case exit after updating the spec.
 

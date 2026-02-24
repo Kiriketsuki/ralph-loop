@@ -8,6 +8,13 @@
 #   push:           true | false (default: true)
 #   model:          model ID to pass to the engine (default: engine default)
 
+# Ensure user-local binaries (claude, gemini, etc.) are on PATH regardless of how this
+# script was launched (bash scripts don't inherit zsh aliases or .zshrc PATH additions).
+export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:$PATH"
+# Source nvm to add nvm-managed binaries (e.g. gemini) to PATH.
+# shellcheck disable=SC1091
+[ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
+
 ENGINE=${1:-"gemini"}
 MAX_ITERATIONS=${2:-20}
 PUSH_CHANGES=${3:-true}
@@ -35,6 +42,15 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 mkdir -p "$LOG_DIR"
 
+# Check for jq -- required for real-time streaming output when using claude engine
+JQ_AVAILABLE=false
+if command -v jq &>/dev/null; then
+    JQ_AVAILABLE=true
+fi
+if [ "$ENGINE" = "claude" ] && [ "$JQ_AVAILABLE" = "false" ]; then
+    echo "NOTE: jq not found. Claude output will not stream in real time. Install jq for live output."
+fi
+
 # Seed iteration counter from spec so resuming a session continues numbering correctly
 ITERATION=$(grep -oP '(?<=\*\*Current Iteration\*\*: )\d+' "$SPEC_FILE" 2>/dev/null || echo 0)
 ITERATION=${ITERATION:-0}
@@ -57,7 +73,23 @@ while true; do
     if [ "$ENGINE" = "gemini" ]; then
         gemini -p "$PROMPT" -y "${MODEL_ARGS[@]}" 2>&1 | stdbuf -oL tee "$LOG_FILE"
     elif [ "$ENGINE" = "claude" ]; then
-        claude -p "$PROMPT" --dangerously-skip-permissions "${MODEL_ARGS[@]}" 2>&1 | stdbuf -oL tee "$LOG_FILE"
+        if [ "$JQ_AVAILABLE" = "true" ]; then
+            # stream-json emits newline-delimited JSON events as they are produced,
+            # enabling real-time output. jq extracts assistant text and tool names.
+            claude -p "$PROMPT" --dangerously-skip-permissions --output-format stream-json "${MODEL_ARGS[@]}" 2>&1 | \
+                while IFS= read -r line; do
+                    printf '%s\n' "$line" >> "$LOG_FILE"
+                    printf '%s\n' "$line" | jq -rj '
+                        if .type == "assistant" then
+                            ([.message.content[]? | select(.type == "text") | .text] | join(""))
+                        elif .type == "tool_use" then
+                            ("[Tool: " + (.tool_use.name // "unknown") + "]\n")
+                        else empty end
+                    ' 2>/dev/null
+                done
+        else
+            claude -p "$PROMPT" --dangerously-skip-permissions "${MODEL_ARGS[@]}" 2>&1 | stdbuf -oL tee "$LOG_FILE"
+        fi
     elif [ "$ENGINE" = "copilot" ]; then
         copilot -p "$PROMPT" --allow-all-tools "${MODEL_ARGS[@]}" 2>&1 | stdbuf -oL tee "$LOG_FILE"
     else
@@ -68,8 +100,15 @@ while true; do
     # Auto-sync to GitHub if there are changes
     if [ "$PUSH_CHANGES" = "true" ] && [ -n "$(git status --porcelain)" ]; then
         echo "Syncing changes to GitHub (branch: $BRANCH)..."
+        # Build semantic commit message from the progress entry the agent just wrote.
+        # Expected format: - **[YYYY-MM-DD HH:MM]** (Iteration N) [type]: summary
+        PROGRESS_LINE=$(grep -m1 "(Iteration $ITERATION) \[[a-z]*\]:" ".ralph/progress.md" 2>/dev/null || true)
+        COMMIT_TYPE=$(printf '%s' "$PROGRESS_LINE" | sed -n 's/.*\[\([a-z]*\)\]:.*/\1/p')
+        COMMIT_SUMMARY=$(printf '%s' "$PROGRESS_LINE" | sed 's/.*\[[a-z]*\]: //')
+        COMMIT_TYPE=${COMMIT_TYPE:-"chore"}
+        COMMIT_SUMMARY=${COMMIT_SUMMARY:-"Iteration $ITERATION automated progress sync"}
         git add .
-        git commit -m "Ralph Iteration $ITERATION: Automated Progress Sync"
+        git commit -m "${COMMIT_TYPE}(ralph): ${COMMIT_SUMMARY}"
         git push origin "$BRANCH"
     fi
 
