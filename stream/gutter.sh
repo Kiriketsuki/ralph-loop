@@ -53,6 +53,7 @@ REPEAT=0
 for entry in "${ENTRIES[@]}"; do
     # Use the first 40 chars as fingerprint (enough to catch same task description)
     FINGERPRINT="${entry:0:40}"
+    [ -z "$FINGERPRINT" ] && continue  # skip empty entries to avoid false positives
     if [ "$FINGERPRINT" = "$PREV" ]; then
         REPEAT=$(( REPEAT + 1 ))
         if [ "$REPEAT" -ge 2 ]; then

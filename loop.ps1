@@ -8,6 +8,12 @@ param(
 # .ralph/loop.ps1 - Headless Ralph Loop Orchestrator (PowerShell)
 # Run from the project root directory.
 # Usage: .\.ralph\loop.ps1 [-Engine gemini|claude|copilot] [-MaxIterations 20] [-Push $true|$false] [-Model <model-id>]
+#
+# Exit codes:
+#   0   MISSION_COMPLETE
+#   1   Max iterations reached
+#   2   Stuck -- no pending, no proposed tasks
+#   3   Proposed tasks need human review
 
 $SpecFile = ".ralph/spec.md"
 $PromptFile = ".ralph/prompts/build.md"
@@ -72,7 +78,9 @@ while ($true) {
     # Auto-sync to GitHub if there are changes
     if ($Push -and (git status --porcelain)) {
         Write-Host "Syncing changes to GitHub (branch: $Branch)..."
-        git add .
+        # Stage tracked modified files + any new files under .ralph/ (avoids sweeping up
+        # untracked secrets or build artifacts outside the agent's working area)
+        git add -u; git add .ralph/
         git commit -m "Ralph Iteration $($Iteration): Automated Progress Sync"
         git push origin $Branch
     }

@@ -78,7 +78,7 @@ esac
 # Validate plan-work mode requirements
 if [ "$MODE" = "plan-work" ]; then
     CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-    if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" ]]; then
+    if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "HEAD" ]]; then
         echo "ERROR: plan-work mode requires a feature branch. You are on '$CURRENT_BRANCH'." >&2
         echo "Create a feature branch first: git checkout -b feature/<name>" >&2
         exit 1
@@ -252,7 +252,9 @@ while true; do
         COMMIT_SUMMARY=$(printf '%s' "$PROGRESS_LINE" | sed 's/.*Iteration [0-9]*) [a-z]*: //')
         COMMIT_TYPE=${COMMIT_TYPE:-"chore"}
         COMMIT_SUMMARY=${COMMIT_SUMMARY:-"Iteration $ITERATION automated progress sync"}
-        git add .
+        # Stage tracked modified files + any new files under .ralph/ (avoids sweeping up
+        # untracked secrets or build artifacts outside the agent's working area)
+        git add -u && git add .ralph/
         git commit -m "${COMMIT_TYPE}(ralph): ${COMMIT_SUMMARY}"
         git push origin "$BRANCH"
     fi

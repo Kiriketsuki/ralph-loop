@@ -2,14 +2,16 @@
 
 # .ralph/plan.sh - Interactive Ralph Loop Planning Session v2
 # Run from the project root directory.
-# Usage: bash .ralph/plan.sh [engine] [model] [mode]
-#   engine: gemini | claude | copilot (default: gemini)
-#   model:  model ID to pass to the engine (default: engine default)
-#   mode:   plan (default) | plan-work
+# Usage: bash .ralph/plan.sh [engine] [model] [mode] [work_scope]
+#   engine:     gemini | claude | copilot (default: gemini)
+#   model:      model ID to pass to the engine (default: engine default)
+#   mode:       plan (default) | plan-work
+#   work_scope: description of scoped work (required when mode=plan-work)
 
 ENGINE=${1:-"gemini"}
 MODEL=${2:-""}
 MODE=${3:-"plan"}
+WORK_SCOPE=${4:-""}
 
 MODEL_ARGS=()
 [ -n "$MODEL" ] && MODEL_ARGS=("--model" "$MODEL")
@@ -47,6 +49,22 @@ if [ "$MODE" = "plan-work" ] && [ ! -f "$SPEC_FILE" ]; then
     exit 1
 fi
 
+# plan-work mode: must be on a feature branch (not main/master/detached HEAD)
+if [ "$MODE" = "plan-work" ]; then
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "HEAD" ]]; then
+        echo "ERROR: plan-work mode requires a feature branch. You are on '$CURRENT_BRANCH'." >&2
+        echo "Create a feature branch first: git checkout -b feature/<name>" >&2
+        exit 1
+    fi
+    if [ -z "$WORK_SCOPE" ]; then
+        echo "ERROR: plan-work mode requires a work_scope argument (4th positional arg)." >&2
+        echo "Usage: bash .ralph/plan.sh [engine] [model] plan-work \"description of work\"" >&2
+        exit 1
+    fi
+    export WORK_SCOPE
+fi
+
 if [ "$MODE" = "plan" ]; then
     echo "Starting Ralph Planning Session with $ENGINE..."
     echo "The agent will guide you through goal alignment, constraints, criteria, task decomposition, and scoring."
@@ -60,12 +78,19 @@ else
 fi
 echo ""
 
+# Prepare prompt content (substitute $WORK_SCOPE for plan-work mode)
+if [ "$MODE" = "plan-work" ]; then
+    PLANNER_CONTENT="$(envsubst '$WORK_SCOPE' < "$PLANNER_FILE")"
+else
+    PLANNER_CONTENT="$(cat "$PLANNER_FILE")"
+fi
+
 if [ "$ENGINE" = "gemini" ]; then
-    gemini "${MODEL_ARGS[@]}" < "$PLANNER_FILE"
+    gemini "${MODEL_ARGS[@]}" <<< "$PLANNER_CONTENT"
 elif [ "$ENGINE" = "claude" ]; then
-    claude "${MODEL_ARGS[@]}" < "$PLANNER_FILE"
+    claude "${MODEL_ARGS[@]}" <<< "$PLANNER_CONTENT"
 elif [ "$ENGINE" = "copilot" ]; then
-    copilot "${MODEL_ARGS[@]}" < "$PLANNER_FILE"
+    copilot "${MODEL_ARGS[@]}" <<< "$PLANNER_CONTENT"
 else
     echo "ERROR: Unknown engine '$ENGINE'. Use 'gemini', 'claude', or 'copilot'." >&2
     exit 1
