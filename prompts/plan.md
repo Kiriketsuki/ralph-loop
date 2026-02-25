@@ -112,6 +112,8 @@ Present the approved tasks as a structured table with columns: ID, Task Descript
 
 **Sub-task sizing rule**: Each sub-task should represent one focused unit of work a headless agent can complete in a single iteration without reading more than 3-4 files. If a task feels large, split it.
 
+**Specs directory**: If the project has 3 or more distinct areas of concern (e.g., separate subsystems, UI components, API layers), propose creating `.ralph/specs/<topic>.md` files for each concern. List the proposed topics and ask: "Should I create per-topic spec files for any of these areas?" If the human agrees, note which topics will have dedicated spec files — agents will read these alongside spec.md when working on related tasks.
+
 ---
 
 ## Stage 5 -- Scoring
@@ -126,6 +128,8 @@ Compute: `Score = (Impact × 3) + (Blocking × 2) + (Risk × 1)`
 Show the human the scored matrix and ask: "Do the scores reflect the actual priority of these tasks? Would you adjust any Impact or Risk values? (Blocking is computed from the dependency graph and cannot be manually adjusted.)"
 
 Iterate until they approve.
+
+Also ask: "For task selection, should agents use **scored** order (highest score first, recommended for most projects) or **ordered** (top-to-bottom, simpler for small linear projects)?" Record the answer as `Task Selection Mode` (default: `scored`).
 
 **Note**: Headless agents never modify Score. It is set here and fixed for the entire run.
 
@@ -174,6 +178,7 @@ Write `.ralph/spec.md` using exactly this structure:
 - **Overall Status**: IN_PROGRESS
 - **Current Iteration**: 0
 - **Last Update**: [today's date YYYY-MM-DD HH:MM]
+- **Task Selection Mode**: scored
 
 ## Acceptance Criteria for Exit
 > These criteria are verified in a dedicated verification iteration after all tasks complete. The agent must not set MISSION_COMPLETE without passing verification.
@@ -204,4 +209,43 @@ After writing, print a summary:
 - Highest-scored task (the agent will likely start here)
 - Any constraints or criteria worth double-checking
 
-Then say: "Review `.ralph/spec.md` before running the loop. When ready: `bash .ralph/loop.sh [engine] [max_iterations] [push]`"
+Then proceed to Stage 6.5.
+
+---
+
+## Stage 6.5 -- Operational Guide
+
+Ask the human: "One last thing before you run the loop — what commands does this project use for building, testing, and linting? (e.g. `npm run build`, `pytest`, `eslint .`)"
+
+Collect answers for:
+- **Build & Run**: how to build and start the project
+- **Test**: how to run the test suite
+- **Lint**: how to run linting or formatting
+
+Write `.ralph/agents.md` using exactly this structure:
+
+```markdown
+# Operational Guide
+
+This file is seeded during the planning session and augmented by agents at runtime.
+Agents: read this at iteration start. Append discoveries under `## Agent Learnings`.
+
+## Build & Run
+[build and run commands]
+
+## Test
+[test commands]
+
+## Lint
+[lint commands]
+
+## Notes
+[any operational caveats, required env vars, or known setup steps mentioned by the human]
+
+## Agent Learnings
+<!-- Agents append discoveries below. Do not edit existing entries. -->
+```
+
+If the human says "skip" or "I don't know yet", write the file with placeholder text.
+
+Then say: "Review `.ralph/spec.md` and `.ralph/agents.md` before running the loop. When ready: `bash .ralph/loop.sh [engine] [max_iterations] [push]`"

@@ -1,26 +1,37 @@
 #!/bin/bash
 
-# .ralph/plan.sh - Interactive Ralph Loop Planning Session
+# .ralph/plan.sh - Interactive Ralph Loop Planning Session v2
 # Run from the project root directory.
-# Usage: bash .ralph/plan.sh [engine] [model]
+# Usage: bash .ralph/plan.sh [engine] [model] [mode]
 #   engine: gemini | claude | copilot (default: gemini)
 #   model:  model ID to pass to the engine (default: engine default)
+#   mode:   plan (default) | plan-work
 
 ENGINE=${1:-"gemini"}
 MODEL=${2:-""}
+MODE=${3:-"plan"}
 
 MODEL_ARGS=()
 [ -n "$MODEL" ] && MODEL_ARGS=("--model" "$MODEL")
 SPEC_FILE=".ralph/spec.md"
-PLANNER_FILE=".ralph/planner.md"
+
+# Resolve planner file from mode
+case "$MODE" in
+    plan)       PLANNER_FILE=".ralph/prompts/plan.md" ;;
+    plan-work)  PLANNER_FILE=".ralph/prompts/plan-work.md" ;;
+    *)
+        echo "ERROR: Unknown mode '$MODE'. Use 'plan' or 'plan-work'." >&2
+        exit 1
+        ;;
+esac
 
 if [ ! -f "$PLANNER_FILE" ]; then
     echo "ERROR: $PLANNER_FILE not found. Run from the project root." >&2
     exit 1
 fi
 
-# Overwrite guard
-if [ -f "$SPEC_FILE" ]; then
+# Overwrite guard (only for full plan mode)
+if [ "$MODE" = "plan" ] && [ -f "$SPEC_FILE" ]; then
     echo "WARNING: $SPEC_FILE already exists."
     read -r -p "Overwrite existing spec? (y/N): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
@@ -30,10 +41,23 @@ if [ -f "$SPEC_FILE" ]; then
     echo "Proceeding with overwrite..."
 fi
 
-echo "Starting Ralph Planning Session with $ENGINE..."
-echo "The agent will guide you through goal alignment, constraints, criteria, task decomposition, and scoring."
-echo "spec.md will be written at the end of the session."
-echo "Review spec.md before running: bash .ralph/loop.sh"
+# plan-work mode: spec must exist (we're adding to it, not creating it)
+if [ "$MODE" = "plan-work" ] && [ ! -f "$SPEC_FILE" ]; then
+    echo "ERROR: $SPEC_FILE not found. Run 'bash .ralph/plan.sh' first to create a spec." >&2
+    exit 1
+fi
+
+if [ "$MODE" = "plan" ]; then
+    echo "Starting Ralph Planning Session with $ENGINE..."
+    echo "The agent will guide you through goal alignment, constraints, criteria, task decomposition, and scoring."
+    echo "spec.md and agents.md will be written at the end of the session."
+    echo "Review spec.md before running: bash .ralph/loop.sh"
+else
+    echo "Starting Ralph Feature-Branch Planning Session with $ENGINE..."
+    echo "The agent will help you scope and plan a focused piece of work."
+    echo "New tasks will be appended to spec.md."
+    echo "When done, run: bash .ralph/loop.sh [engine] [max_iterations] [push] [model] build"
+fi
 echo ""
 
 if [ "$ENGINE" = "gemini" ]; then
@@ -52,7 +76,11 @@ ENGINE_EXIT=$?
 echo ""
 if [ "$ENGINE_EXIT" -eq 0 ]; then
     echo "Planning session ended."
-    echo "Next step: review .ralph/spec.md, then run: bash .ralph/loop.sh [engine] [max_iterations] [push]"
+    if [ "$MODE" = "plan" ]; then
+        echo "Next step: review .ralph/spec.md and .ralph/agents.md, then run: bash .ralph/loop.sh [engine] [max_iterations] [push]"
+    else
+        echo "Next step: review .ralph/spec.md (new tasks appended), then run: bash .ralph/loop.sh [engine] [max_iterations] [push] [model] build"
+    fi
 else
     echo "WARNING: Engine exited with code $ENGINE_EXIT. Check that the planning session completed and spec.md was written before running loop.sh." >&2
 fi

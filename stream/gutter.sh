@@ -1,0 +1,82 @@
+#!/bin/bash
+
+# stream/gutter.sh - Ralph gutter/stuck-loop detector
+#
+# Reads the last N entries from .ralph/progress.md and detects:
+#   1. Same-task repetition: same task attempted 3+ times in a row
+#   2. Ping-pong pattern: alternating A-B-A-B task pattern
+#
+# Exit codes:
+#   0 = no gutter detected
+#   1 = gutter detected (agent is in a rut, human review needed)
+#
+# Usage: bash .ralph/stream/gutter.sh
+# Environment:
+#   RALPH_GUTTER_LOOKBACK - Number of recent progress entries to examine (default: 6)
+#   PROGRESS_FILE         - Path to progress.md (default: .ralph/progress.md)
+
+PROGRESS_FILE="${PROGRESS_FILE:-.ralph/progress.md}"
+LOOKBACK="${RALPH_GUTTER_LOOKBACK:-6}"
+
+if [ ! -f "$PROGRESS_FILE" ]; then
+    # No progress file yet -- no gutter possible
+    exit 0
+fi
+
+# Extract the last LOOKBACK task references from progress entries.
+# Progress format: - **[YYYY-MM-DD HH:MM]** (Iteration N) type: summary
+# We look for task IDs mentioned in parentheses after "Iteration N" -- the iteration number
+# is a proxy for task sequence. We extract the task name from the summary where possible.
+# Simpler approach: extract the iteration numbers and the type+summary for pattern matching.
+
+RECENT=$(grep -E '^\- \*\*\[.*\]\*\* \(Iteration [0-9]+\)' "$PROGRESS_FILE" \
+    | tail -n "$LOOKBACK" \
+    | sed 's/.*Iteration [0-9]*) //')
+
+if [ -z "$RECENT" ]; then
+    exit 0
+fi
+
+# Build array of task summaries (one per line)
+mapfile -t ENTRIES <<< "$RECENT"
+COUNT="${#ENTRIES[@]}"
+
+if [ "$COUNT" -lt 3 ]; then
+    # Not enough history to detect patterns
+    exit 0
+fi
+
+# --- Detection 1: Same-task 3+ times in a row ---
+# Extract first token of each entry as a task fingerprint
+PREV=""
+REPEAT=0
+for entry in "${ENTRIES[@]}"; do
+    # Use the first 40 chars as fingerprint (enough to catch same task description)
+    FINGERPRINT="${entry:0:40}"
+    if [ "$FINGERPRINT" = "$PREV" ]; then
+        REPEAT=$(( REPEAT + 1 ))
+        if [ "$REPEAT" -ge 2 ]; then
+            # Same entry appeared 3+ times (prev set on first match, +1 twice)
+            printf 'GUTTER: Same task repeated %d times in a row: "%s"\n' "$(( REPEAT + 1 ))" "$FINGERPRINT" >&2
+            exit 1
+        fi
+    else
+        REPEAT=0
+    fi
+    PREV="$FINGERPRINT"
+done
+
+# --- Detection 2: Ping-pong A-B-A-B pattern ---
+if [ "$COUNT" -ge 4 ]; then
+    # Check last 4 entries for A != B, entries[0]==entries[2] and entries[1]==entries[3]
+    A="${ENTRIES[-4]:0:40}"
+    B="${ENTRIES[-3]:0:40}"
+    C="${ENTRIES[-2]:0:40}"
+    D="${ENTRIES[-1]:0:40}"
+    if [ "$A" != "$B" ] && [ "$A" = "$C" ] && [ "$B" = "$D" ]; then
+        printf 'GUTTER: Ping-pong pattern detected (A-B-A-B): "%s" <-> "%s"\n' "$A" "$B" >&2
+        exit 1
+    fi
+fi
+
+exit 0

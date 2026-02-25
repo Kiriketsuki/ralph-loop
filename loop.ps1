@@ -10,7 +10,9 @@ param(
 # Usage: .\.ralph\loop.ps1 [-Engine gemini|claude|copilot] [-MaxIterations 20] [-Push $true|$false] [-Model <model-id>]
 
 $SpecFile = ".ralph/spec.md"
-$PromptFile = ".ralph/prompt.md"
+$PromptFile = ".ralph/prompts/build.md"
+$GuardrailsFile = ".ralph/prompts/guardrails.md"
+$AgentsFile = ".ralph/agents.md"
 $LogDir = ".ralph/logs"
 $Iteration = 0
 
@@ -44,7 +46,15 @@ while ($true) {
     Write-Host "--- Iteration $Iteration ---"
 
     $LogFile = "$LogDir/iteration_$Iteration.log"
-    $Prompt = Get-Content $PromptFile -Raw
+    # Build full prompt: guardrails + build prompt + agents.md
+    $Prompt = ""
+    if (Test-Path $GuardrailsFile) {
+        $Prompt = (Get-Content $GuardrailsFile -Raw) + "`n---`n"
+    }
+    $Prompt += Get-Content $PromptFile -Raw
+    if (Test-Path $AgentsFile) {
+        $Prompt += "`n---`n" + (Get-Content $AgentsFile -Raw)
+    }
     $ModelArgs = @()
     if ($Model) { $ModelArgs = @("--model", $Model) }
 

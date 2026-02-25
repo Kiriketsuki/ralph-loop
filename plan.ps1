@@ -8,7 +8,7 @@ param(
 )
 
 $SpecFile = ".ralph/spec.md"
-$PlannerFile = ".ralph/planner.md"
+$PlannerFile = ".ralph/prompts/plan.md"
 
 if (-not (Test-Path $PlannerFile)) {
     Write-Error "ERROR: $PlannerFile not found. Run from the project root."

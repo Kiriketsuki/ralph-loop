@@ -39,6 +39,7 @@
 - **Overall Status**: IN_PROGRESS
 - **Current Iteration**: 0
 - **Last Update**: [YYYY-MM-DD HH:MM]
+- **Task Selection Mode**: scored
 
 ## Acceptance Criteria for Exit
 > These criteria are verified in a dedicated verification iteration after all tasks complete. The agent must not set MISSION_COMPLETE without passing verification.
