@@ -13,7 +13,7 @@ These rules apply to every agent operating in a Ralph loop, regardless of mode. 
 
 ## Token Awareness
 
-- If the prompt contains `[TOKEN WARNING]`, finish the current step, update the spec with your progress, and exit immediately. Do not start new sub-steps.
+- The loop orchestrator monitors token usage via `stream/parser.sh`. If your session approaches the context limit, the parser terminates the stream and the loop treats it as a clean iteration end. To minimize lost work, update `spec.md` and `progress.md` incrementally during task execution, not only at the end.
 
 ## Operational Knowledge
 

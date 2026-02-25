@@ -8,6 +8,10 @@
 #   mode:       plan (default) | plan-work
 #   work_scope: description of scoped work (required when mode=plan-work)
 
+export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:$PATH"
+[ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
+
 ENGINE=${1:-"gemini"}
 MODEL=${2:-""}
 MODE=${3:-"plan"}
@@ -63,6 +67,20 @@ if [ "$MODE" = "plan-work" ]; then
         exit 1
     fi
     export WORK_SCOPE
+
+    # Validate WORK_SCOPE for injection safety
+    if [ "${#WORK_SCOPE}" -gt 500 ]; then
+        echo "ERROR: WORK_SCOPE exceeds 500 characters." >&2
+        exit 1
+    fi
+    if printf '%s' "$WORK_SCOPE" | grep -qE '[`]|\$\('; then
+        echo "ERROR: WORK_SCOPE contains unsafe characters (backticks or \$())." >&2
+        exit 1
+    fi
+    if [ "$(printf '%s' "$WORK_SCOPE" | wc -l)" -gt 0 ]; then
+        echo "ERROR: WORK_SCOPE must be a single line (no embedded newlines)." >&2
+        exit 1
+    fi
 fi
 
 if [ "$MODE" = "plan" ]; then

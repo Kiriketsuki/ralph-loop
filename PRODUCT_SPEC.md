@@ -48,7 +48,7 @@ sequenceDiagram
     participant S as spec.md
     participant G as git
 
-    L->>A: Invoke with prompt.md contents
+    L->>A: Invoke with guardrails.md + build.md + agents.md
     A->>S: Read spec (goal, tasks, constraints)
     A->>A: Select highest-scored eligible task
     A->>A: Execute task (surgical changes)
@@ -69,15 +69,21 @@ sequenceDiagram
 | File | Phase | Role | Modified by Agent? |
 |:---|:---|:---|:---|
 | `spec.md` | Both | Single source of truth -- project plan + live state | Yes (every iteration) |
-| `prompt.md` | Execution | Standing agent instructions, read every iteration | No |
-| `planner.md` | Planning | Ten-stage Q&A instructions for the planning agent (4 product discovery + 6 execution planning) | No |
+| `agents.md` | Execution | Operational guide: build/test/lint commands; agents append learnings at runtime | Append only |
+| `prompts/build.md` | Execution | Standing headless agent instructions, read every execution iteration | No |
+| `prompts/plan.md` | Planning | Ten-stage Q&A instructions for the planning agent (4 product discovery + 6 execution planning) | No |
+| `prompts/plan-work.md` | Planning | Feature-branch scoped planning instructions | No |
+| `prompts/guardrails.md` | Both | Shared rules injected into every prompt by loop.sh | No |
+| `stream/parser.sh` | Execution | Token counting stream middleware; exit 10 = clean rotate | No |
+| `stream/gutter.sh` | Execution | Stuck-loop pattern detector; exit 1 = gutter detected | No |
 | `plan.sh` | Planning | Bash launcher for interactive planning session | No |
 | `plan.ps1` | Planning | PowerShell launcher for interactive planning session | No |
 | `loop.sh` | Execution | Bash orchestrator -- invokes agent, commits, checks exit | No |
 | `loop.ps1` | Execution | PowerShell orchestrator | No |
 | `progress.md` | Execution | Append-only human audit trail -- never read by agents | Append only |
 | `changelog.md` | Execution | Append-only educational log of introduced items -- never read by agents | Append only |
-| `.ralph/logs/` | Execution | Per-iteration agent output logs (auto-created) | Created by loop.sh |
+| `specs/` | Both | Per-topic spec files for complex projects (optional) | Yes (agent reads; agent may write) |
+| `logs/` | Execution | Per-iteration agent output logs (auto-created) | Created by loop.sh |
 
 ---
 
@@ -116,6 +122,8 @@ stateDiagram-v2
 | `1` | Max iterations reached | Safety cap hit -- review logs and raise the limit or fix the spec |
 | `2` | No `pending` tasks, no `proposed` tasks | Stuck -- all remaining tasks are `blocked` or `failed`; human intervention required |
 | `3` | No `pending` tasks, `proposed` tasks exist | Agent discovered new tasks; promote `proposed` to `pending` and re-run |
+| `4` | Gutter detected | Agent in a stuck loop; review `progress.md` for repeated patterns |
+| `130` | Ctrl+C / SIGTERM | Manual interruption; safe to re-run |
 
 ---
 
@@ -222,7 +230,7 @@ When verification fails, the loop exits with code `3` (proposed tasks exist). Th
 
 ### One-Task-Per-Turn Enforcement
 
-The headless agent protocol (`prompt.md`) mandates that the agent exits after completing exactly one task. This is enforced by the `## MANDATORY EXIT` step in the agent's execution protocol. `loop.sh` re-invokes the agent from scratch for each iteration, making it structurally impossible for a single agent session to execute multiple tasks -- even if the agent ignored the instruction, `loop.sh` would terminate the process before it could begin another task.
+The headless agent protocol (`prompts/build.md`) mandates that the agent exits after completing exactly one task. This is enforced by the `## MANDATORY EXIT` step in the agent's execution protocol. `loop.sh` re-invokes the agent from scratch for each iteration, making it structurally impossible for a single agent session to execute multiple tasks -- even if the agent ignored the instruction, `loop.sh` would terminate the process before it could begin another task.
 
 ### Fresh Context Per Iteration
 
@@ -255,6 +263,9 @@ Every iteration produces exactly one git commit (per task). If an iteration prod
 | max_iterations | `$2` | `-MaxIterations` | any integer | `20` |
 | push | `$3` | `-Push` | `true`, `false` | `true` |
 | model | `$4` | `-Model` | model ID string | engine default |
+| mode | `$5` | `-Mode` | `build`, `plan-work` | `build` |
+| work_scope | `$6` | `-WorkScope` | description string | `""` |
+| -- | `--dry-run` flag | `-DryRun` switch | -- | off |
 
 ### CLI Arguments -- plan.sh / plan.ps1
 
@@ -262,6 +273,8 @@ Every iteration produces exactly one git commit (per task). If an iteration prod
 |:---|:---|:---|:---|:---|
 | engine | `$1` | `-Engine` | `gemini`, `claude`, `copilot` | `gemini` |
 | model | `$2` | `-Model` | model ID string | engine default |
+| mode | `$3` | `-Mode` | `plan`, `plan-work` | `plan` |
+| work_scope | `$4` | `-WorkScope` | description string | `""` |
 
 ### Environment Variables
 
@@ -269,20 +282,30 @@ Every iteration produces exactly one git commit (per task). If an iteration prod
 |:---|:---|:---|
 | `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | `loop.sh` (auto) | Raises per-response output ceiling to 64,000 tokens for large file writes |
 | `PATH` | `loop.sh` (auto) | Prepends `~/.local/bin`, `~/.npm-global/bin`, `/usr/local/bin` |
+| `RALPH_TOKEN_WARN` | User (optional) | Token count for warn threshold (default: 100000); triggers `[TOKEN WARNING]` to stderr |
+| `RALPH_TOKEN_ROTATE` | User (optional) | Token count for rotate threshold (default: 128000); parser exits 10, loop treats as clean end |
+| `RALPH_GUTTER_LOOKBACK` | User (optional) | Number of recent progress entries to examine for stuck-loop patterns (default: 6) |
+| `WORK_SCOPE` | `loop.sh` / `plan.sh` (auto) | Injected into `plan-work.md` via envsubst substitution |
 
 ### File Paths (relative to project root)
 
 | Path | Description |
 |:---|:---|
 | `.ralph/spec.md` | Project specification and live state (produced by plan.sh) |
-| `.ralph/prompt.md` | Headless agent standing instructions |
-| `.ralph/planner.md` | Planning agent six-stage Q&A instructions |
+| `.ralph/agents.md` | Operational guide: build/test/lint commands (produced by plan.sh, agents append) |
+| `.ralph/prompts/build.md` | Headless agent standing instructions |
+| `.ralph/prompts/plan.md` | Planning agent ten-stage Q&A instructions |
+| `.ralph/prompts/plan-work.md` | Feature-branch scoped planning instructions |
+| `.ralph/prompts/guardrails.md` | Shared rules injected into every prompt |
+| `.ralph/stream/parser.sh` | Token counting stream middleware |
+| `.ralph/stream/gutter.sh` | Stuck-loop pattern detector |
 | `.ralph/plan.sh` | Interactive planning session (Bash) |
 | `.ralph/plan.ps1` | Interactive planning session (PowerShell) |
 | `.ralph/loop.sh` | Headless execution orchestrator (Bash) |
 | `.ralph/loop.ps1` | Headless execution orchestrator (PowerShell) |
 | `.ralph/progress.md` | Append-only iteration audit trail |
 | `.ralph/changelog.md` | Append-only educational item log |
+| `.ralph/specs/` | Per-topic spec files (optional, for complex projects) |
 | `.ralph/logs/iteration_N.log` | Per-iteration full agent output (auto-created) |
 
 ---
@@ -351,11 +374,10 @@ An agent may optionally read `.ralph/logs/iteration_N.log` for a direct dependen
 | Single-repo scope | Each loop instance operates on one repo | Run separate loops for multi-repo projects |
 | No parallel task execution | One task per turn, sequential only | Decompose parallel work into sequential tasks with documented independence |
 | Scores are immutable during execution | By design -- prevents agent score manipulation | Edit spec.md manually between runs if re-scoring is needed |
-| loop.ps1 lacks semantic commit parsing | PowerShell limitation | loop.ps1 uses generic commit messages; use loop.sh on Linux/macOS for semantic commits |
-| loop.ps1 lacks auto-branch creation | PowerShell limitation | Create the `ralph/<slug>` branch manually before running loop.ps1 on a fresh project |
+| loop.ps1 gutter detection requires bash | Calls stream/gutter.sh via bash | Install Git Bash or WSL on Windows; gutter check is skipped if bash is not on PATH |
 | Copilot engine has no streaming output parsing | copilot CLI limitation | Output is buffered; use gemini or claude for real-time visibility |
 | jq required for real-time Claude output | External dependency | Install jq or accept buffered output fallback |
 
 ---
 
-*Authored by: Clault KiperS 4.6*
+*Authored by: Claude Sonnet 4.6*

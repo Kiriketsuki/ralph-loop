@@ -34,7 +34,7 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
 
 4. **Verification Check**:
    - After completing a task, check: are ALL tasks in the Task Matrix now `completed`?
-   - If yes: set Overall Status to `VERIFICATION_PENDING` (NOT `MISSION_COMPLETE`). Append to `.ralph/progress.md`: "All tasks completed. Verification iteration required next." Proceed to Mandatory Exit.
+   - If yes: set Overall Status to `VERIFICATION_PENDING` (NOT `MISSION_COMPLETE`). Append to `.ralph/progress.md`: `- **[YYYY-MM-DD HH:MM]** (Iteration N) chore: All tasks completed. Verification iteration required next.` Proceed to Mandatory Exit.
    - If no: proceed to Step 6 (Update Spec) normally.
 
 5. **Verification Iteration**:
@@ -43,12 +43,12 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
      - Run tests if criteria mention tests passing.
      - Check file existence, output correctness, or code quality as criteria dictate.
      - Validate no Technical Constraint violations were introduced.
-   - **If all criteria pass**: Set Overall Status to `MISSION_COMPLETE`. Log verification success in `.ralph/progress.md`.
+   - **If all criteria pass**: Set Overall Status to `MISSION_COMPLETE`. Append to `.ralph/progress.md`: `- **[YYYY-MM-DD HH:MM]** (Iteration N) chore: Verification passed. All acceptance criteria met.`
    - **If any criterion fails**:
      - Log each failure in `## Known Issues` with timestamp, severity, description, and related task.
      - Add new tasks to the Task Matrix with status `proposed` to address each failure.
      - Set Overall Status back to `IN_PROGRESS`.
-     - Append summary to `.ralph/progress.md`: "Verification failed. N issues found. N proposed tasks created."
+     - Append to `.ralph/progress.md`: `- **[YYYY-MM-DD HH:MM]** (Iteration N) fix: Verification failed. N issues found. N proposed tasks created.`
    - Proceed to Mandatory Exit.
 
 6. **Update Spec (Accurate)**:

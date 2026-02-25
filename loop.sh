@@ -90,6 +90,20 @@ if [ "$MODE" = "plan-work" ]; then
     fi
     # Export for envsubst substitution in plan-work.md
     export WORK_SCOPE
+
+    # Validate WORK_SCOPE for injection safety
+    if [ "${#WORK_SCOPE}" -gt 500 ]; then
+        echo "ERROR: WORK_SCOPE exceeds 500 characters." >&2
+        exit 1
+    fi
+    if printf '%s' "$WORK_SCOPE" | grep -qE '[`]|\$\('; then
+        echo "ERROR: WORK_SCOPE contains unsafe characters (backticks or \$())." >&2
+        exit 1
+    fi
+    if [ "$(printf '%s' "$WORK_SCOPE" | wc -l)" -gt 0 ]; then
+        echo "ERROR: WORK_SCOPE must be a single line (no embedded newlines)." >&2
+        exit 1
+    fi
 fi
 
 if [ ! -f "$SPEC_FILE" ]; then
@@ -167,6 +181,7 @@ fi
 invoke_engine() {
     local PROMPT="$1"
     local LOG_FILE="$2"
+    local ENGINE_CODE PARSER_CODE
 
     export LOG_FILE ENGINE
 
@@ -181,7 +196,20 @@ invoke_engine() {
         return 1
     fi
 
-    return "${PIPESTATUS[1]}"
+    # Capture both sides of the pipeline. PIPESTATUS is available immediately after the
+    # pipeline completes and is reset on the next command, so capture it first.
+    ENGINE_CODE="${PIPESTATUS[0]}"
+    PARSER_CODE="${PIPESTATUS[1]}"
+
+    # Parser exit 10 = token rotate; treat as clean end regardless of engine code.
+    if [ "$PARSER_CODE" -eq 10 ]; then
+        return 10
+    elif [ "$ENGINE_CODE" -ne 0 ]; then
+        return "$ENGINE_CODE"
+    elif [ "$PARSER_CODE" -ne 0 ]; then
+        return "$PARSER_CODE"
+    fi
+    return 0
 }
 
 # Seed iteration counter from spec so resuming a session continues numbering correctly
@@ -222,6 +250,9 @@ while true; do
     LOG_FILE="$LOG_DIR/iteration_$ITERATION.log"
     FULL_PROMPT=$(build_prompt)
 
+    # Snapshot pending task count before invocation for plan-work completion detection.
+    PENDING_BEFORE=$(grep -cE "\| *pending *\|" "$SPEC_FILE" 2>/dev/null || echo 0)
+
     invoke_engine "$FULL_PROMPT" "$LOG_FILE"
     ENGINE_EXIT=$?
 
@@ -233,7 +264,32 @@ while true; do
         echo "WARNING: Engine exited with code $ENGINE_EXIT." >&2
     fi
 
-    # --- Gutter detection ---
+    # --- Commit block: always commit if there are changes; push only when requested ---
+    # Committing before gutter detection ensures diagnostics are preserved on exit 4.
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Committing changes (branch: $BRANCH)..."
+        # Build semantic commit message from the progress entry the agent just wrote.
+        # Expected format: - **[YYYY-MM-DD HH:MM]** (Iteration N) type: summary
+        PROGRESS_LINE=$(grep -m1 "(Iteration $ITERATION) [a-z]*:" ".ralph/progress.md" 2>/dev/null || true)
+        COMMIT_TYPE=$(printf '%s' "$PROGRESS_LINE" | sed -n 's/.*Iteration [0-9]*) \([a-z]*\):.*/\1/p')
+        COMMIT_SUMMARY=$(printf '%s' "$PROGRESS_LINE" | sed 's/.*Iteration [0-9]*) [a-z]*: //')
+        COMMIT_TYPE=${COMMIT_TYPE:-"chore"}
+        COMMIT_SUMMARY=${COMMIT_SUMMARY:-"Iteration $ITERATION automated progress sync"}
+        # Sanitize: strip backticks and $ to prevent shell injection via the commit message.
+        SAFE_SUMMARY=$(printf '%s' "$COMMIT_SUMMARY" | tr -d '`$')
+        # Stage tracked modified files + explicit agent-writable paths under .ralph/ to avoid
+        # accidentally staging secrets or build artifacts outside the agent's working area.
+        git add -u
+        git add .ralph/spec.md .ralph/progress.md .ralph/changelog.md .ralph/agents.md \
+            .ralph/logs/ .ralph/specs/ 2>/dev/null || true
+        printf '%s\n' "${COMMIT_TYPE}(ralph): ${SAFE_SUMMARY}" | git commit -F -
+        if [ "$PUSH_CHANGES" = "true" ]; then
+            echo "Pushing to GitHub (branch: $BRANCH)..."
+            git push origin "$BRANCH"
+        fi
+    fi
+
+    # --- Gutter detection (after commit so diagnostics are preserved on exit 4) ---
     if [ -f "$GUTTER" ]; then
         if ! bash "$GUTTER"; then
             echo "GUTTER DETECTED: Agent appears to be in a rut. Human review needed." >&2
@@ -242,28 +298,13 @@ while true; do
         fi
     fi
 
-    # Auto-sync to GitHub if there are changes
-    if [ "$PUSH_CHANGES" = "true" ] && [ -n "$(git status --porcelain)" ]; then
-        echo "Syncing changes to GitHub (branch: $BRANCH)..."
-        # Build semantic commit message from the progress entry the agent just wrote.
-        # Expected format: - **[YYYY-MM-DD HH:MM]** (Iteration N) [type]: summary
-        PROGRESS_LINE=$(grep -m1 "(Iteration $ITERATION) [a-z]*:" ".ralph/progress.md" 2>/dev/null || true)
-        COMMIT_TYPE=$(printf '%s' "$PROGRESS_LINE" | sed -n 's/.*Iteration [0-9]*) \([a-z]*\):.*/\1/p')
-        COMMIT_SUMMARY=$(printf '%s' "$PROGRESS_LINE" | sed 's/.*Iteration [0-9]*) [a-z]*: //')
-        COMMIT_TYPE=${COMMIT_TYPE:-"chore"}
-        COMMIT_SUMMARY=${COMMIT_SUMMARY:-"Iteration $ITERATION automated progress sync"}
-        # Stage tracked modified files + any new files under .ralph/ (avoids sweeping up
-        # untracked secrets or build artifacts outside the agent's working area)
-        git add -u && git add .ralph/
-        git commit -m "${COMMIT_TYPE}(ralph): ${COMMIT_SUMMARY}"
-        git push origin "$BRANCH"
-    fi
-
     # plan-work mode has its own exit condition: agent writes plan to spec and exits.
     # We run for up to MAX_ITERATIONS but typically complete in 1-2.
     if [ "$MODE" = "plan-work" ]; then
-        # Check if agent wrote new pending tasks (plan complete)
-        if grep -qE "\| *pending *\|" "$SPEC_FILE"; then
+        # Compare pending task count before and after: exit 0 only if new tasks were added.
+        # A pre-existing pending task matching the pattern must not trigger a false positive.
+        PENDING_AFTER=$(grep -cE "\| *pending *\|" "$SPEC_FILE" 2>/dev/null || echo 0)
+        if [ "$PENDING_AFTER" -gt "$PENDING_BEFORE" ]; then
             echo "Plan-work session complete. New pending tasks written to spec.md."
             echo "Switch to build mode: bash .ralph/loop.sh [engine] [max_iterations] [push] [model] build"
             exit 0

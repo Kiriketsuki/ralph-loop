@@ -12,8 +12,11 @@ Each agent invocation starts with no memory of prior sessions. The spec file is 
 **What is the spec?**
 `.ralph/spec.md` is both the project plan and the live state document. The agent reads it to know what to do and writes to it to record what was done. It is the single source of truth.
 
-**What is the prompt?**
-`.ralph/prompt.md` contains the agent's standing instructions. It does not change between iterations. Do not modify it for a specific project -- put project-specific instructions in the spec's Technical Constraints section.
+**What are the prompts?**
+`.ralph/prompts/build.md` contains the headless agent's standing instructions. `.ralph/prompts/guardrails.md` holds shared rules injected into every prompt by `loop.sh`. Neither file changes between iterations. Put project-specific instructions in the spec's Technical Constraints section.
+
+**What is `agents.md`?**
+`.ralph/agents.md` is an operational guide seeded during planning (Stage 6.5). It records project-specific build, test, and lint commands. Headless agents read it at the start of each iteration and may append new learnings under `## Agent Learnings`.
 
 ---
 
@@ -24,36 +27,46 @@ Ralph operates in two distinct phases. **Never run `loop.sh` before completing a
 ### Phase 1 -- Planning
 
 ```bash
-bash .ralph/plan.sh [engine]
+bash .ralph/plan.sh [engine] [model] [mode] [work_scope]
 ```
 
-Launches an interactive session with the planning agent (`planner.md`). The agent conducts a ten-stage Q&A across two tiers:
+Launches an interactive session with the planning agent (`prompts/plan.md`). The agent conducts a ten-stage Q&A across two tiers:
 
 - **Product discovery** (stages 0a–0d): vision & audience, optional research validation, feature scoping, technical architecture
-- **Execution planning** (stages 1–6): goal alignment, constraints, acceptance criteria, task decomposition, scoring, spec write
+- **Execution planning** (stages 1–6): goal alignment, constraints, acceptance criteria, task decomposition, scoring, spec write, agents.md write
 
-The entire product discovery tier is skippable — say "skip to task planning" at any point. The agent then writes a complete `.ralph/spec.md`.
+The entire product discovery tier is skippable — say "skip to task planning" at any point. The agent then writes a complete `.ralph/spec.md` and `.ralph/agents.md`.
 
-After the session ends, **review `spec.md` manually** before proceeding.
+After the session ends, **review `spec.md` and `agents.md` manually** before proceeding.
 
 | Argument | Values | Default |
 |:---|:---|:---|
 | engine | `gemini`, `claude`, or `copilot` | `gemini` |
+| model | model ID string | engine default |
+| mode | `plan` or `plan-work` | `plan` |
+| work_scope | description of scoped work (required when mode=plan-work) | `""` |
 
-**Overwrite guard**: If `spec.md` already exists, `plan.sh` will prompt before overwriting. This prevents clobbering a live or completed spec.
+**Overwrite guard**: If `spec.md` already exists, `plan.sh` will prompt before overwriting (plan mode only).
+
+**plan-work mode**: Adds new tasks to an existing spec for a focused feature branch. Requires a non-main branch and a work_scope description.
 
 **PowerShell:**
 ```powershell
-.\.ralph\plan.ps1 [-Engine gemini|claude|copilot]
+.\.ralph\plan.ps1 [-Engine gemini|claude|copilot] [-Model <model-id>] [-Mode plan|plan-work] [-WorkScope "description"]
 ```
 
 ### Phase 2 -- Execution
 
 ```bash
-bash .ralph/loop.sh [engine] [max_iterations] [push]
+bash .ralph/loop.sh [engine] [max_iterations] [push] [model] [mode] [work_scope]
 ```
 
 Runs the headless loop. Each iteration: reads spec, selects the highest-scored eligible task, executes it, updates spec and `progress.md`, commits, exits. Repeats until `MISSION_COMPLETE`, max iterations, or stuck state.
+
+**Debug -- dry-run mode** (prints full prompt, no engine invoked):
+```bash
+bash .ralph/loop.sh claude 20 true "" build --dry-run
+```
 
 ---
 
@@ -64,15 +77,28 @@ Copy this template into a `.ralph/` folder at your project root before starting:
 ```
 <project-root>/
   .ralph/
-    spec.md       # Project specification and live state -- produced by plan.sh
-    prompt.md     # Headless agent instructions -- copy as-is, do not modify
-    planner.md    # Planning agent instructions (ten-stage Q&A, produces scored spec.md)
-    plan.sh       # Interactive planning session (Bash)
-    plan.ps1      # Interactive planning session (PowerShell)
-    loop.sh       # Bash orchestrator
-    loop.ps1      # PowerShell orchestrator
-    progress.md   # Append-only progress log (never read by headless agents)
-    logs/         # Per-iteration agent output logs (auto-created at runtime)
+    loop.sh           # Bash execution orchestrator
+    plan.sh           # Bash planning launcher
+    loop.ps1          # PowerShell execution orchestrator
+    plan.ps1          # PowerShell planning launcher
+
+    prompts/
+      build.md        # Headless agent instructions (read every execution iteration)
+      plan.md         # Planning agent ten-stage Q&A instructions
+      plan-work.md    # Feature-branch scoped planning instructions
+      guardrails.md   # Shared rules injected into every prompt by loop.sh
+
+    spec.md           # Project specification and live state (produced by plan.sh)
+    agents.md         # Operational guide: build/test/lint commands (produced by plan.sh)
+    progress.md       # Append-only iteration audit trail (never read by headless agents)
+    changelog.md      # Append-only educational item log (never read by headless agents)
+
+    stream/
+      parser.sh       # Token counting stream middleware (exit 10 = rotate)
+      gutter.sh       # Stuck-loop pattern detector (exit 1 = gutter)
+
+    specs/            # Per-topic spec files (optional, for complex projects)
+    logs/             # Per-iteration agent output logs (auto-created at runtime)
 ```
 
 ---
@@ -81,7 +107,7 @@ Copy this template into a `.ralph/` folder at your project root before starting:
 
 1. Copy the contents of this template folder into `<project-root>/.ralph/`.
 2. Run `bash .ralph/plan.sh [engine]` to start the planning session. The agent will guide you through the spec.
-3. Review `.ralph/spec.md` after the planning session ends, then run `loop.sh`.
+3. Review `.ralph/spec.md` and `.ralph/agents.md` after the planning session ends, then run `loop.sh`.
 
 ---
 
@@ -89,31 +115,71 @@ Copy this template into a `.ralph/` folder at your project root before starting:
 
 **Bash:**
 ```bash
-bash .ralph/loop.sh [engine] [max_iterations] [push]
+bash .ralph/loop.sh [engine] [max_iterations] [push] [model] [mode] [work_scope]
 ```
 | Argument | Values | Default |
 |:---|:---|:---|
 | engine | `gemini`, `claude`, or `copilot` | `gemini` |
 | max_iterations | any integer | `20` |
 | push | `true` or `false` | `true` |
+| model | model ID string | engine default |
+| mode | `build` or `plan-work` | `build` |
+| work_scope | description of scoped work (required when mode=plan-work) | `""` |
+
+Flags (can appear anywhere before positional args):
+
+| Flag | Effect |
+|:---|:---|
+| `--dry-run` | Print full concatenated prompt and engine command, then exit without invoking the engine |
 
 Examples:
 ```bash
 bash .ralph/loop.sh claude 15 true
 bash .ralph/loop.sh gemini 20 false
-bash .ralph/loop.sh copilot 10 true
+bash .ralph/loop.sh claude 5 false "" plan-work "add dark mode toggle"
+bash .ralph/loop.sh claude 20 true "" build --dry-run
 ```
 
 **PowerShell:**
 ```powershell
 .\.ralph\loop.ps1 [-Engine gemini|claude|copilot] [-MaxIterations 20] [-Push $true|$false]
+                  [-Model <model-id>] [-Mode build|plan-work] [-WorkScope "description"] [-DryRun]
 ```
 Examples:
 ```powershell
 .\.ralph\loop.ps1 -Engine claude -MaxIterations 15
 .\.ralph\loop.ps1 -Engine gemini -Push $false
-.\.ralph\loop.ps1 -Engine copilot -MaxIterations 10
+.\.ralph\loop.ps1 -Engine claude -Mode plan-work -WorkScope "add dark mode toggle"
+.\.ralph\loop.ps1 -Engine claude -DryRun
 ```
+
+---
+
+## Token Awareness
+
+All engine output is piped through `stream/parser.sh`, which estimates token usage (~4 chars/token). Configure thresholds via environment variables before running the loop:
+
+| Variable | Default | Effect |
+|:---|:---|:---|
+| `RALPH_TOKEN_WARN` | `100000` tokens | Emits `[TOKEN WARNING]` to stderr |
+| `RALPH_TOKEN_ROTATE` | `128000` tokens | Exits with code 10; loop treats as clean iteration end |
+
+```bash
+RALPH_TOKEN_WARN=80000 bash .ralph/loop.sh claude 20 true
+```
+
+Agents are instructed by `guardrails.md` to update `spec.md` and `progress.md` incrementally during task execution — this minimizes lost work if the parser terminates the stream early.
+
+---
+
+## Gutter Detection
+
+After each iteration, `loop.sh` runs `stream/gutter.sh` to detect stuck-loop patterns in `progress.md`:
+
+1. **Same-task repetition**: same task description 3+ times in a row → exit 4
+2. **Ping-pong pattern**: A-B-A-B alternation → exit 4
+
+On gutter detection, the loop exits with code 4 and prints a human review prompt. Configure the lookback window via `RALPH_GUTTER_LOOKBACK` (default: 6 entries).
 
 ---
 
@@ -160,8 +226,10 @@ The Task Matrix has ten columns:
 Progress is written to `.ralph/progress.md` (a separate file), not inside `spec.md`. Each iteration the headless agent appends one line:
 
 ```
-- **[YYYY-MM-DD HH:MM]** (Iteration N): [one-line summary of what was done]
+- **[YYYY-MM-DD HH:MM]** (Iteration N) type: [one-line summary of what was done]
 ```
+
+Valid `type` values: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`.
 
 Headless agents never read `progress.md` -- it is a human audit trail only.
 
@@ -213,6 +281,8 @@ Higher score = selected first. Within equal scores, lowest task ID wins. If a pa
 | Max iterations reached | `1` | Safety cap hit -- review logs and raise the limit or fix the spec |
 | No `pending` tasks but not complete | `2` | Stuck -- all remaining tasks are `blocked` or `failed`; human intervention required |
 | Proposed tasks need review | `3` | Agent discovered new tasks; promote `proposed` to `pending` and re-run |
+| Gutter detected | `4` | Agent in a stuck loop; review `progress.md` for repeated patterns |
+| Ctrl+C / SIGTERM | `130` | Manual interruption; safe to re-run |
 
 ---
 

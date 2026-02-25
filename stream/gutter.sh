@@ -38,7 +38,11 @@ if [ -z "$RECENT" ]; then
 fi
 
 # Build array of task summaries (one per line)
-mapfile -t ENTRIES <<< "$RECENT"
+# Using a while-read loop instead of mapfile for bash 3.2 compatibility (macOS default shell).
+ENTRIES=()
+while IFS= read -r entry_line; do
+    ENTRIES+=("$entry_line")
+done <<< "$RECENT"
 COUNT="${#ENTRIES[@]}"
 
 if [ "$COUNT" -lt 3 ]; then
@@ -53,7 +57,12 @@ REPEAT=0
 for entry in "${ENTRIES[@]}"; do
     # Use the first 40 chars as fingerprint (enough to catch same task description)
     FINGERPRINT="${entry:0:40}"
-    [ -z "$FINGERPRINT" ] && continue  # skip empty entries to avoid false positives
+    if [ -z "$FINGERPRINT" ]; then
+        # Reset repeat counter so an empty entry cannot bridge two identical non-empty
+        # entries and inflate the count, causing a false positive (e.g. A,A,"",A).
+        REPEAT=0
+        continue
+    fi
     if [ "$FINGERPRINT" = "$PREV" ]; then
         REPEAT=$(( REPEAT + 1 ))
         if [ "$REPEAT" -ge 2 ]; then
@@ -70,10 +79,11 @@ done
 # --- Detection 2: Ping-pong A-B-A-B pattern ---
 if [ "$COUNT" -ge 4 ]; then
     # Check last 4 entries for A != B, entries[0]==entries[2] and entries[1]==entries[3]
-    A="${ENTRIES[-4]:0:40}"
-    B="${ENTRIES[-3]:0:40}"
-    C="${ENTRIES[-2]:0:40}"
-    D="${ENTRIES[-1]:0:40}"
+    # Arithmetic indexing avoids negative indices which require bash 4.3+ (not available on macOS default).
+    A="${ENTRIES[$((COUNT-4))]:0:40}"
+    B="${ENTRIES[$((COUNT-3))]:0:40}"
+    C="${ENTRIES[$((COUNT-2))]:0:40}"
+    D="${ENTRIES[$((COUNT-1))]:0:40}"
     if [ "$A" != "$B" ] && [ "$A" = "$C" ] && [ "$B" = "$D" ]; then
         printf 'GUTTER: Ping-pong pattern detected (A-B-A-B): "%s" <-> "%s"\n' "$A" "$B" >&2
         exit 1
