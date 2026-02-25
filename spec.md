@@ -3,6 +3,38 @@
 ## Global Goal
 [Define the ultimate mission of this Ralph loop]
 
+## Product Overview
+[2-3 sentence description of the product: what it is, who it serves, and what problem it solves.]
+> Omit if product discovery was skipped.
+
+## Target Audience
+[Primary user and the core problem this project solves for them.]
+> Omit if product discovery was skipped.
+
+## Feature Scope
+
+### Must-Have (MVP)
+- [Feature]: [acceptance behavior]
+
+### Should-Have
+- [Feature]
+
+### Nice-to-Have
+- [Feature]
+
+> Omit if feature scoping was skipped.
+
+## Technical Architecture
+- **Stack**: [languages, frameworks, databases]
+- **Components**: [high-level structural components]
+- **Key Integrations**: [external APIs, services, SDKs]
+
+> Omit if technical architecture was skipped.
+
+## Research Notes
+[Bullet points from research validation.]
+> Omit if research was skipped or not performed.
+
 ## Project Status
 - **Overall Status**: IN_PROGRESS
 - **Current Iteration**: 0

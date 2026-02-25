@@ -27,7 +27,12 @@ Ralph operates in two distinct phases. **Never run `loop.sh` before completing a
 bash .ralph/plan.sh [engine]
 ```
 
-Launches an interactive session with the planning agent (`planner.md`). The agent conducts a structured Q&A -- goal alignment, constraints, acceptance criteria, task decomposition, and scoring -- then writes a complete `.ralph/spec.md`.
+Launches an interactive session with the planning agent (`planner.md`). The agent conducts a ten-stage Q&A across two tiers:
+
+- **Product discovery** (stages 0a–0d): vision & audience, optional research validation, feature scoping, technical architecture
+- **Execution planning** (stages 1–6): goal alignment, constraints, acceptance criteria, task decomposition, scoring, spec write
+
+The entire product discovery tier is skippable — say "skip to task planning" at any point. The agent then writes a complete `.ralph/spec.md`.
 
 After the session ends, **review `spec.md` manually** before proceeding.
 
@@ -61,7 +66,7 @@ Copy this template into a `.ralph/` folder at your project root before starting:
   .ralph/
     spec.md       # Project specification and live state -- produced by plan.sh
     prompt.md     # Headless agent instructions -- copy as-is, do not modify
-    planner.md    # Planning agent instructions (six-stage Q&A, produces scored spec.md)
+    planner.md    # Planning agent instructions (ten-stage Q&A, produces scored spec.md)
     plan.sh       # Interactive planning session (Bash)
     plan.ps1      # Interactive planning session (PowerShell)
     loop.sh       # Bash orchestrator

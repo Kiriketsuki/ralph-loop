@@ -70,7 +70,7 @@ sequenceDiagram
 |:---|:---|:---|:---|
 | `spec.md` | Both | Single source of truth -- project plan + live state | Yes (every iteration) |
 | `prompt.md` | Execution | Standing agent instructions, read every iteration | No |
-| `planner.md` | Planning | Six-stage Q&A instructions for the planning agent | No |
+| `planner.md` | Planning | Ten-stage Q&A instructions for the planning agent (4 product discovery + 6 execution planning) | No |
 | `plan.sh` | Planning | Bash launcher for interactive planning session | No |
 | `plan.ps1` | Planning | PowerShell launcher for interactive planning session | No |
 | `loop.sh` | Execution | Bash orchestrator -- invokes agent, commits, checks exit | No |
@@ -302,13 +302,18 @@ The `.ralph/` directory should be committed to the project repo. The `logs/` sub
 ### Planning Phase
 
 1. Run `bash .ralph/plan.sh [engine]` from the project root.
-2. The planning agent conducts a six-stage Q&A:
-   - **Stage 1**: Goal alignment -- confirm the mission in one sentence
+2. The planning agent conducts a ten-stage Q&A:
+   - **Stage 0a**: Product vision & audience -- what are you building, for whom, what problem?
+   - **Stage 0b**: Research & validation (optional) -- validate tech choices using available tools
+   - **Stage 0c**: Feature scoping -- must-have / should-have / nice-to-have breakdown
+   - **Stage 0d**: Technical architecture -- stack, components, integrations
+   - **Stage 1**: Goal alignment -- confirm the mission in one sentence (synthesized from discovery)
    - **Stage 2**: Technical constraints -- define what the agent must never do
    - **Stage 3**: Acceptance criteria -- define verifiable "done" conditions
    - **Stage 4**: Task decomposition -- break goal into T1, T1.1, T1.2, T2... structure
    - **Stage 5**: Scoring -- assign Impact, Risk, compute Blocking, calculate Score
    - **Stage 6**: Spec write -- produce final `spec.md` from the template format
+   > The entire product discovery tier (stages 0a–0d) can be skipped with one sentence from the user.
 3. Review `spec.md` manually after the session. Verify task decomposition, scores, constraints, and acceptance criteria are correct before proceeding.
 
 ### Execution Phase

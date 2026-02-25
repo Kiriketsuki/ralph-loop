@@ -9,7 +9,7 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
 
 ## Execution Protocol
 
-1. **Analyze Spec**: Read `.ralph/spec.md` to understand the global goal, acceptance criteria, technical constraints, and the current state of all tasks.
+1. **Analyze Spec**: Read `.ralph/spec.md` to understand the global goal, product overview, target audience, feature scope, technical architecture, research notes, acceptance criteria, technical constraints, and the current state of all tasks.
 
 2. **Task Selection (Score-Based)**:
    - Identify all tasks with status `pending`.
