@@ -15,6 +15,12 @@
 #   RALPH_GUTTER_LOOKBACK - Number of recent progress entries to examine (default: 6)
 #   PROGRESS_FILE         - Path to progress.md (default: .ralph/progress.md)
 
+# NOTE: Parallel-agent limitation — when multiple agents in the same batch work on
+# different tasks, their progress entries carry different task IDs and iteration numbers,
+# so the 40-char fingerprint differs between entries even if the summaries are identical.
+# This means same-task repetition detection cannot fire within a single parallel batch.
+# Gutter detection remains effective across sequential batches (e.g. the same task failing
+# repeatedly across multiple batch cycles will be caught by the repetition check).
 PROGRESS_FILE="${PROGRESS_FILE:-.ralph/progress.md}"
 LOOKBACK="${RALPH_GUTTER_LOOKBACK:-6}"
 
@@ -29,7 +35,10 @@ fi
 # is a proxy for task sequence. We extract the task name from the summary where possible.
 # Simpler approach: extract the iteration numbers and the type+summary for pattern matching.
 
-RECENT=$(grep -E '^\- \*\*\[.*\]\*\* \(Iteration [0-9]+\)' "$PROGRESS_FILE" \
+# Reverse order: tail first to bound the scan to a fixed window regardless of file size,
+# then grep to filter to progress entries only. This keeps scan cost O(1) as progress.md grows.
+RECENT=$(tail -n "$((LOOKBACK * 3))" "$PROGRESS_FILE" \
+    | grep -E '^\- \*\*\[.*\]\*\* \(Iteration [0-9]+\)' \
     | tail -n "$LOOKBACK" \
     | sed 's/.*Iteration [0-9]*) //')
 
