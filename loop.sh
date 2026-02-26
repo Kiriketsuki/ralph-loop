@@ -42,8 +42,13 @@ if ! [[ "$RALPH_MAX_RETRIES" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: RALPH_MAX_RETRIES must be a positive integer, got '$RALPH_MAX_RETRIES'." >&2; exit 1
 fi
 
-# Global state for worktree tracking (accessed by trap handler and cleanup function)
-declare -A TASK_WORKTREES TASK_BRANCHES AGENT_ITERATIONS AGENT_PIDS
+# Global state for worktree tracking (accessed by trap handler and cleanup function).
+# Parallel indexed arrays — bash 3.2-compatible replacement for declare -A.
+# Index i in each array corresponds to VALID_TASK_PAIRS[i] set during batch setup.
+TASK_WORKTREES=()
+TASK_BRANCHES=()
+AGENT_ITERATIONS=()
+AGENT_PIDS=()
 # NOTE: DISPATCH_PIPE_STATUSES is set inside dispatch_engine() and read by its direct caller
 # (run_parallel_agent) within the same subshell. Do NOT read it from the parent shell after
 # `wait` — background subshells cannot propagate array writes back to the parent.
@@ -56,9 +61,9 @@ cleanup_task_worktrees() {
     # Abort any in-progress merge before removing worktrees (handles Ctrl+C during merge)
     # Use -C $WORKTREE_PATH so this runs on the main ralph worktree regardless of CWD.
     [ -n "$WORKTREE_PATH" ] && git -C "$WORKTREE_PATH" merge --abort 2>/dev/null || true
-    for task_id in "${!TASK_WORKTREES[@]}"; do
-        local wt="${TASK_WORKTREES[$task_id]}"
-        local br="${TASK_BRANCHES[$task_id]}"
+    for (( _ci=0; _ci<${#TASK_WORKTREES[@]}; _ci++ )); do
+        local wt="${TASK_WORKTREES[$_ci]}"
+        local br="${TASK_BRANCHES[$_ci]}"
         if [ -d "$wt" ]; then
             git worktree remove --force "$wt" 2>/dev/null || true
         fi
@@ -188,7 +193,11 @@ build_prompt() {
     fi
 
     if [ "$MODE" = "plan-work" ]; then
-        PROMPT_CONTENT="${PROMPT_CONTENT}$(envsubst '$WORK_SCOPE' < "$PROMPT_FILE")"
+        PROMPT_CONTENT="${PROMPT_CONTENT}## Headless Planning Mode
+You are running non-interactively via loop.sh. Complete all stages W1-W4 in a single autonomous pass using WORK_SCOPE as your primary input. Do not ask the user questions — make reasonable assumptions and document them in your final summary.
+
+---
+$(envsubst '$WORK_SCOPE' < "$PROMPT_FILE")"
     else
         PROMPT_CONTENT="${PROMPT_CONTENT}$(cat "$PROMPT_FILE")"
     fi
@@ -206,8 +215,10 @@ $(cat "$AGENTS_FILE")"
 # Sets COMMIT_TYPE and COMMIT_SUMMARY in the caller's scope.
 extract_commit_parts() {
     local progress_line="$1"
+    COMMIT_TYPE=""
+    COMMIT_SUMMARY=""
     COMMIT_TYPE=$(printf '%s' "$progress_line" | sed -n 's/.*Iteration [0-9]*) \([a-z]*\):.*/\1/p')
-    COMMIT_SUMMARY=$(printf '%s' "$progress_line" | sed 's/.*Iteration [0-9]*) [a-z]*: //')
+    COMMIT_SUMMARY=$(printf '%s' "$progress_line" | sed -n 's/.*Iteration [0-9]*) [a-z]*: //p')
 }
 
 # --- Dry-run mode ---
@@ -649,7 +660,7 @@ if [ "$MODE" = "build" ]; then
     mkdir -p "$LOG_DIR"
 fi
 
-ITERATION=$(grep -oP '(?<=\*\*Current Iteration\*\*: )\d+' "$SPEC_FILE" 2>/dev/null || echo 0)
+ITERATION=$(sed -n 's/.*\*\*Current Iteration\*\*: \([0-9][0-9]*\).*/\1/p' "$SPEC_FILE" 2>/dev/null | head -1)
 ITERATION=${ITERATION:-0}
 
 echo "Starting Headless Ralph Loop [mode: $MODE] with $ENGINE on branch $BRANCH (resuming from iteration $ITERATION)..."
@@ -713,10 +724,14 @@ fi
 
 while true; do
     # Read current iteration counter from spec (so resuming after interruption works)
-    BASE_ITERATION=$(grep -oP '(?<=\*\*Current Iteration\*\*: )\d+' "$SPEC_FILE" 2>/dev/null || echo 0)
+    BASE_ITERATION=$(sed -n 's/.*\*\*Current Iteration\*\*: \([0-9][0-9]*\).*/\1/p' "$SPEC_FILE" 2>/dev/null | head -1)
     BASE_ITERATION=${BASE_ITERATION:-0}
 
-    TASK_SELECTION_MODE=$(grep -oP 'Task Selection Mode[^:]*:\s*\K(scored|ordered)' "$SPEC_FILE" 2>/dev/null | head -1 || true)
+    TASK_SELECTION_MODE=$(sed -n '/Task Selection Mode/{ s/.*:[[:space:]]*//; s/[[:space:]].*//; p; }' "$SPEC_FILE" 2>/dev/null | head -1)
+    case "$TASK_SELECTION_MODE" in
+        scored|ordered) ;;
+        *) TASK_SELECTION_MODE="" ;;
+    esac
     TASK_SELECTION_MODE=${TASK_SELECTION_MODE:-scored}
 
     # Max iterations check: stop if we've already run enough iterations
@@ -792,6 +807,10 @@ while true; do
         # blocked/failed — the loop would otherwise spin or exit with code 2 incorrectly.
         if ! grep -qE "\| *(pending|proposed) *\|" "$SPEC_FILE" \
             && ! grep -qE "\*\*Overall Status\*\*:\s*VERIFICATION_PENDING" "$SPEC_FILE"; then
+            if grep -qE "\| *failed *\|" "$SPEC_FILE"; then
+                echo "WARNING: Tasks in 'failed' state remain unresolved. Human review needed." >&2
+                exit 2
+            fi
             echo "All tasks in terminal states. Triggering VERIFICATION_PENDING..."
             sedi 's/\*\*Overall Status\*\*: IN_PROGRESS/\*\*Overall Status\*\*: VERIFICATION_PENDING/' ".ralph/spec.md"
             echo "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${BASE_ITERATION}) chore: All tasks completed or blocked. Verification required." >> ".ralph/progress.md"
@@ -812,11 +831,14 @@ while true; do
     TASK_BRANCHES=()
     AGENT_ITERATIONS=()
     AGENT_PIDS=()
-    declare -A AGENT_EXIT_CODES=()
-    declare -a VALID_TASK_PAIRS=()
+    AGENT_EXIT_CODES=()
+    VALID_TASK_PAIRS=()
 
     # Create per-task branches and worktrees; populate VALID_TASK_PAIRS for valid IDs only.
     # Invalid IDs are skipped here and excluded from all subsequent spawn/wait/merge loops.
+    # _valid_idx tracks insertion index into parallel arrays (TASK_WORKTREES, TASK_BRANCHES,
+    # AGENT_ITERATIONS) independently of i (the TASK_PAIRS index used for iteration numbering).
+    _valid_idx=0
     for i in "${!TASK_PAIRS[@]}"; do
         task_pair="${TASK_PAIRS[$i]}"
         task_id="${task_pair%%:*}"
@@ -842,10 +864,11 @@ while true; do
         git branch "$task_branch" HEAD
         git worktree add "$task_worktree" "$task_branch"
 
-        TASK_WORKTREES[$task_id]="$task_worktree"
-        TASK_BRANCHES[$task_id]="$task_branch"
-        AGENT_ITERATIONS[$task_id]="$iteration"
+        TASK_WORKTREES[$_valid_idx]="$task_worktree"
+        TASK_BRANCHES[$_valid_idx]="$task_branch"
+        AGENT_ITERATIONS[$_valid_idx]="$iteration"
         VALID_TASK_PAIRS+=("$task_pair")
+        _valid_idx=$((_valid_idx + 1))
         echo "  Worktree ready: ${task_id} -> ${task_worktree} (iteration: $iteration)"
     done
 
@@ -866,10 +889,11 @@ while true; do
     umask 077
 
     # Spawn parallel agents (one per task)
-    for task_pair in "${VALID_TASK_PAIRS[@]}"; do
+    for _i in "${!VALID_TASK_PAIRS[@]}"; do
+        task_pair="${VALID_TASK_PAIRS[$_i]}"
         task_id="${task_pair%%:*}"
-        iteration="${AGENT_ITERATIONS[$task_id]}"
-        task_worktree="${TASK_WORKTREES[$task_id]}"
+        iteration="${AGENT_ITERATIONS[$_i]}"
+        task_worktree="${TASK_WORKTREES[$_i]}"
         retry_ctx=$(get_retry_context "$task_id")
 
         # Write prompt to a temp file to avoid ARG_MAX limits on large agents.md payloads.
@@ -877,29 +901,30 @@ while true; do
         PROMPT_TMP="${WORKTREE_PATH}/${LOG_DIR}/prompt_${task_id}_${iteration}.txt"
         build_agent_prompt "$task_id" "$iteration" "$retry_ctx" "$N_TASKS" "$CACHED_BASE_PROMPT" > "$PROMPT_TMP"
         run_parallel_agent "$task_id" "$iteration" "$task_worktree" "$PROMPT_TMP" &
-        AGENT_PIDS[$task_id]=$!
-        echo "  Agent spawned: ${task_id} (PID: ${AGENT_PIDS[$task_id]})"
+        AGENT_PIDS[$_i]=$!
+        echo "  Agent spawned: ${task_id} (PID: ${AGENT_PIDS[$_i]})"
     done
 
     # Restore default umask after all prompt files have been written
     umask 022
 
     # Wait for all agents and collect exit codes
-    for task_pair in "${VALID_TASK_PAIRS[@]}"; do
-        task_id="${task_pair%%:*}"
-        wait "${AGENT_PIDS[$task_id]}" 2>/dev/null
-        AGENT_EXIT_CODES[$task_id]=$?
-        echo "  Agent done: ${task_id} -> exit ${AGENT_EXIT_CODES[$task_id]}"
+    for _i in "${!VALID_TASK_PAIRS[@]}"; do
+        task_id="${VALID_TASK_PAIRS[$_i]%%:*}"
+        wait "${AGENT_PIDS[$_i]}" 2>/dev/null
+        AGENT_EXIT_CODES[$_i]=$?
+        echo "  Agent done: ${task_id} -> exit ${AGENT_EXIT_CODES[$_i]}"
     done
 
     # Process results in score order (VALID_TASK_PAIRS preserves selection order)
     N_MERGED=0
-    for task_pair in "${VALID_TASK_PAIRS[@]}"; do
+    for _i in "${!VALID_TASK_PAIRS[@]}"; do
+        task_pair="${VALID_TASK_PAIRS[$_i]}"
         task_id="${task_pair%%:*}"
-        exit_code="${AGENT_EXIT_CODES[$task_id]}"
-        task_worktree="${TASK_WORKTREES[$task_id]}"
-        task_branch="${TASK_BRANCHES[$task_id]}"
-        iteration="${AGENT_ITERATIONS[$task_id]}"
+        exit_code="${AGENT_EXIT_CODES[$_i]}"
+        task_worktree="${TASK_WORKTREES[$_i]}"
+        task_branch="${TASK_BRANCHES[$_i]}"
+        iteration="${AGENT_ITERATIONS[$_i]}"
 
         if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 10 ]; then
             if [ "$exit_code" -eq 10 ]; then
@@ -922,6 +947,23 @@ while true; do
             if commit_and_merge "$task_id" "$task_worktree" "$task_branch" "$iteration"; then
                 N_MERGED=$((N_MERGED + 1))
                 echo "  Merged: ${task_id}"
+                # Detect protocol-compliant failure: agent exited 0 but marked task failed in spec
+                if grep -qE "\| *${task_id} *\|.*\| *failed *\|" ".ralph/spec.md"; then
+                    echo "  Protocol failure detected for ${task_id} — checking retry budget." >&2
+                    handle_failed_agent "$task_id" "$task_worktree" "true"
+                    # If max retries not yet exhausted (task still failed, not blocked), reset to pending
+                    if grep -qE "\| *${task_id} *\|.*\| *failed *\|" ".ralph/spec.md"; then
+                        awk -F'|' -v task="${task_id}" '
+                        BEGIN { OFS="|" }
+                        {
+                            id = $2; gsub(/[[:space:]]/, "", id)
+                            st = $9; gsub(/[[:space:]]/, "", st)
+                            if (id == task && st == "failed") $9 = " pending "
+                            print
+                        }' ".ralph/spec.md" > ".ralph/spec.md.tmp" && mv ".ralph/spec.md.tmp" ".ralph/spec.md"
+                        echo "  Reset ${task_id} from failed -> pending for retry." >&2
+                    fi
+                fi
             else
                 echo "  Source conflict for ${task_id}: will retry next batch." >&2
                 # Use merge-conflict: prefix (not fail:) so it is excluded from RALPH_MAX_RETRIES
@@ -950,6 +992,7 @@ while true; do
 
     # Check if all tasks are done — set VERIFICATION_PENDING for the next iteration
     if ! grep -qE "\| *pending *\|" "$SPEC_FILE" \
+        && ! grep -qE "\| *failed *\|" "$SPEC_FILE" \
         && ! grep -qE "\*\*Overall Status\*\*:\s*VERIFICATION_PENDING" "$SPEC_FILE" \
         && ! grep -qE "\*\*Overall Status\*\*:\s*MISSION_COMPLETE" "$SPEC_FILE" \
         && ! grep -qE "\| *proposed *\|" "$SPEC_FILE"; then

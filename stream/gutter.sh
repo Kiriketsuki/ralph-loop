@@ -35,10 +35,10 @@ fi
 # is a proxy for task sequence. We extract the task name from the summary where possible.
 # Simpler approach: extract the iteration numbers and the type+summary for pattern matching.
 
-# Reverse order: tail first to bound the scan to a fixed window regardless of file size,
-# then grep to filter to progress entries only. This keeps scan cost O(1) as progress.md grows.
-RECENT=$(tail -n "$((LOOKBACK * 3))" "$PROGRESS_FILE" \
-    | grep -E '^\- \*\*\[.*\]\*\* \(Iteration [0-9]+\)' \
+# Scan full file for progress entries, take last LOOKBACK. Avoids the fragile
+# LOOKBACK*3 heuristic that undersamples when entries are multi-line or separated by blanks.
+# progress.md is bounded by iteration count (~100 lines max), so O(n) is negligible.
+RECENT=$(grep -E '^\- \*\*\[.*\]\*\* \(Iteration [0-9]+\)' "$PROGRESS_FILE" \
     | tail -n "$LOOKBACK" \
     | sed 's/.*Iteration [0-9]*) //')
 
