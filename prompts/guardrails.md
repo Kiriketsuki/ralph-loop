@@ -10,6 +10,8 @@ These rules apply to every agent operating in a Ralph loop, regardless of mode. 
 - **No Hallucination**: If a task is impossible or blocked, mark it `blocked` in the spec and explain why in `.ralph/progress.md`. Never fabricate results.
 - **Proposed Tasks Are Read-Only**: Never select or work on a `proposed` task. Only humans can promote `proposed` to `pending`.
 - **Verification Is Mandatory**: Never set `MISSION_COMPLETE` directly from a regular task iteration. Always go through `VERIFICATION_PENDING` first.
+- **No Commits, No Pushes**: Do NOT run `git commit` or `git push`. The loop orchestrator handles all git operations after you exit. You may stage files with `git add <specific-file>` if needed for your work, but do not commit. Prefer narrow staging (`git add <specific-file>`) over broad staging (`git add .` or `git add -A`) to avoid accidentally including unrelated changes.
+- **Failure Analysis Is Mandatory**: If you cannot complete a task, you MUST write a structured failure entry to `.ralph/progress.md` before exiting. Include what went wrong (`Reason:`) and what to avoid on retry (`Avoid:`). An exit without a failure entry for an incomplete task is a protocol violation.
 
 ## Token Awareness
 

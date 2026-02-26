@@ -14,6 +14,11 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
 1a. **Read Operational Guide**: If `.ralph/agents.md` exists, read it now. It contains project-specific commands for building, testing, and linting. Use these commands for any build/test/lint steps in subsequent work.
 
 2. **Task Selection (Score-Based)**:
+   - **Orchestrator Assignment**: If an `## Orchestrator Assignment` block is present at the
+     top of your prompt, skip the score-based selection below. Your task is the one listed
+     as **Assigned Task**. Use the **Assigned Iteration** number when updating `spec.md`
+     and `progress.md`. If a `## Retry Context` section is present, read it carefully —
+     it documents why previous attempts at this task failed and what to avoid.
    - Identify all tasks with status `pending`.
    - Ignore tasks with status `proposed` -- these require human review and are not selectable.
    - Filter to those whose dependencies are all `completed`.
@@ -25,16 +30,40 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
    - **Verification trigger**: If NO `pending` tasks remain, all tasks are `completed`, and Overall Status is `VERIFICATION_PENDING`, this is a **Verification Iteration**. Skip to Step 5.
    - **Specs directory**: If the current task references a topic spec file in `.ralph/specs/`, read that file for detailed requirements before beginning work.
 
+2a. **Codebase Investigation (before writing any code)**:
+   - **Do not assume something is absent because you haven't seen it.** Search the codebase
+     before creating new code. "Don't assume not implemented — search first."
+   - Use **5–10 parallel subagents** for file reads, content searches, and directory
+     exploration. Fan out reads to preserve your main context window for reasoning.
+   - If `.ralph/specs/` files exist that relate to the selected task, use subagents to
+     read them in parallel with other relevant source files.
+   - Investigation is complete when you can answer: what exists, what is missing, and
+     exactly what needs to change.
+
 3. **Perform Work (Surgical Step)**:
    - **CRITICAL**: Execute ONLY the chosen task. Do not attempt to solve multiple tasks in one turn.
    - All changes must adhere to the **Technical Constraints** in the spec.
    - All changes must advance toward satisfying the **Acceptance Criteria for Exit**.
    - If you encounter any problems, warnings, or unexpected behaviors during work -- even if they do not block the current task -- note them for logging in Step 6.
    - If you discover new operational knowledge (build commands, env vars, gotchas), append it to `.ralph/agents.md` under `## Agent Learnings`.
+   - **Build/test validation**: Use exactly **1 subagent** for any build, test, or lint
+     command. Do not run multiple build processes in parallel.
+
+3b. **Failure Protocol**:
+   - If you cannot complete the assigned task (build fails irrecoverably, blocked by an
+     external condition, or the task is impossible as described):
+   - Mark the task as `failed` in the Task Matrix.
+   - Append a structured failure entry to `.ralph/progress.md`:
+     `- **[YYYY-MM-DD HH:MM]** (Iteration N) fail: T<id> failed. Reason: [what went wrong]. Avoid: [what future agents should not do when retrying this task].`
+   - The **Avoid** section is critical — it feeds into the retry context for the next attempt.
+   - **Skip Steps 4–7 entirely.** Proceed directly to Step 8 (Mandatory Exit). The loop orchestrator handles iteration advancement and parent-task completion checks.
 
 4. **Verification Check**:
    - After completing a task, check: are ALL tasks in the Task Matrix now `completed`?
-   - If yes: set Overall Status to `VERIFICATION_PENDING` (NOT `MISSION_COMPLETE`). Append to `.ralph/progress.md`: `- **[YYYY-MM-DD HH:MM]** (Iteration N) chore: All tasks completed. Verification iteration required next.` Proceed to Mandatory Exit.
+   - **Parallel mode**: If an `## Orchestrator Assignment` block is present in your prompt
+     with `- **Mode**: parallel`, skip this step entirely. The orchestrator handles
+     verification triggers after all parallel agents in the batch complete.
+   - If yes (sequential mode only): set Overall Status to `VERIFICATION_PENDING` (NOT `MISSION_COMPLETE`). Append to `.ralph/progress.md`: `- **[YYYY-MM-DD HH:MM]** (Iteration N) chore: All tasks completed. Verification iteration required next.` Proceed to Mandatory Exit.
    - If no: proceed to Step 6 (Update Spec) normally.
 
 5. **Verification Iteration**:
@@ -55,6 +84,10 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
    - Update the chosen task's status to `completed`, `failed`, or `blocked`.
    - If all sub-tasks for a parent task (e.g., all T1.x tasks) are `completed`, set the parent task (T1) to `completed`.
    - Increment **Current Iteration** by 1.
+   - **Parallel mode**: If an `## Orchestrator Assignment` block is present in your prompt
+     with `- **Mode**: parallel`, skip the iteration increment and timestamp update — the
+     orchestrator handles these after all parallel agents in the batch complete. Still
+     update the task status and append to `progress.md`.
    - Update **Last Update** to the current timestamp.
    - Append a concise entry to `.ralph/progress.md` summarizing what was done. Format: `- **[YYYY-MM-DD HH:MM]** (Iteration N) type: [one-line summary]`. The `type` field must be one of: `feat` (new capability), `fix` (bug correction), `refactor` (restructure without behaviour change), `test` (test additions only), `docs` (documentation only), `chore` (maintenance, config, tooling). This file is append-only -- add a new line at the end, never edit existing lines.
    - If issues were observed during work, append an entry to `## Known Issues` with timestamp, severity (low/medium/high/critical), description, and related task ID. Known Issues is append-only.
