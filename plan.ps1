@@ -86,7 +86,7 @@ if ($Model) { $ModelArgs = @("--model", $Model) }
 
 switch ($Engine) {
     "gemini"  { $PlannerContent | gemini  @ModelArgs }
-    "claude"  { $PlannerContent | claude  @ModelArgs }
+    "claude"  { claude --system-prompt $PlannerContent @ModelArgs }
     "copilot" { $PlannerContent | copilot @ModelArgs }
     default {
         Write-Error "ERROR: Unknown engine '$Engine'. Use 'gemini', 'claude', or 'copilot'."

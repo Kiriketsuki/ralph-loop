@@ -658,6 +658,11 @@ if [ "$MODE" = "build" ]; then
     cd "$WORKTREE_PATH" || { echo "ERROR: Cannot cd to worktree $WORKTREE_PATH" >&2; exit 1; }
     BRANCH="$RALPH_BRANCH"
     mkdir -p "$LOG_DIR"
+
+    # Sync any untracked .ralph/ files (spec.md, agents.md, prompts/, stream/, etc.)
+    # from the original project root. Uses cp -n (no-clobber) so committed files
+    # already present in the worktree are never overwritten.
+    cp -rn "${PROJECT_ROOT}/.ralph/." ".ralph/"
 fi
 
 ITERATION=$(sed -n 's/.*\*\*Current Iteration\*\*: \([0-9][0-9]*\).*/\1/p' "$SPEC_FILE" 2>/dev/null | head -1)
@@ -849,7 +854,7 @@ while true; do
             continue
         fi
         iteration=$((BASE_ITERATION + i + 1))
-        task_branch="${RALPH_BRANCH}/${task_id}"
+        task_branch="${RALPH_BRANCH}-${task_id}"
         task_worktree="${WORKTREE_PATH}-${task_id}"
 
         # Ensure a clean slate: remove stale worktree first (so the branch is no longer
