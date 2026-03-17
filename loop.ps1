@@ -1,5 +1,5 @@
 param(
-    [string][ValidateSet("gemini", "claude", "copilot")]$Engine = "gemini",
+    [string]$Engine = "gemini",
     [int]$MaxIterations = 20,
     [bool]$Push = $true,
     [string]$Model = "",
@@ -20,6 +20,18 @@ param(
 #   3   Proposed tasks need human review
 #   4   Gutter detected -- agent in a rut
 #   130 Ctrl+C / SIGTERM
+
+# ENGINE allowlist validation (T1.1)
+if ($Engine -notin @("gemini", "claude", "copilot")) {
+    Write-Error "ERROR: Unknown engine '$Engine'. Use 'gemini', 'claude', or 'copilot'."
+    exit 1
+}
+
+# Backpressure and timeout configuration (T2.1, T3.1, T6.1)
+$AgentTimeout   = if ($env:RALPH_AGENT_TIMEOUT)   { [int]$env:RALPH_AGENT_TIMEOUT }   else { 1800 }
+$BackoffMax     = if ($env:RALPH_BACKOFF_MAX)      { [int]$env:RALPH_BACKOFF_MAX }     else { 300 }
+$CircuitBreaker = if ($env:RALPH_CIRCUIT_BREAKER)  { [int]$env:RALPH_CIRCUIT_BREAKER } else { 3 }
+$SpawnDelay     = if ($env:RALPH_SPAWN_DELAY)      { [int]$env:RALPH_SPAWN_DELAY }     else { 2 }
 
 $SpecFile      = ".ralph/spec.md"
 $GuardrailsFile = ".ralph/prompts/guardrails.md"
@@ -142,12 +154,20 @@ if ($Model) { $ModelArgs = @("--model", $Model) }
 
 Write-Host "Starting Headless Ralph Loop [mode: $Mode] with $Engine on branch $Branch (resuming from iteration $Iteration)..."
 
+# Consecutive no-progress iteration counter for exponential backoff (T3.1 + T7.1)
+$ConsecutiveFailBatches = 0
+
 while ($true) {
     $Iteration++
 
     if ($Iteration -gt $MaxIterations) {
         Write-Host "WARNING: Max iterations reached ($MaxIterations). Stopping loop."
         exit 1
+    }
+
+    # Inter-iteration stagger delay (T6.1): prevents API burst on consecutive iterations
+    if ($SpawnDelay -gt 0 -and $Iteration -gt 1) {
+        Start-Sleep -Seconds $SpawnDelay
     }
 
     Write-Host "--- Iteration $Iteration ---"
@@ -159,25 +179,57 @@ while ($true) {
     $PendingBefore = (Select-String -Path $SpecFile -Pattern '\|\s*pending\s*\|' -AllMatches |
         Measure-Object).Count
 
-    # --- Invoke engine with inline token counting ---
-    $TotalChars  = 0
-    $Warned      = $false
-    $TokenRotate = $false
+    # --- Invoke engine with per-agent wall-clock timeout via Start-Job (T2.1) ---
+    $TotalChars     = 0
+    $Warned         = $false
+    $TokenRotate    = $false
     $EngineExitCode = 0
+    $TimedOut       = $false
 
-    # StreamWriter opened once for the iteration — avoids per-line open/write/close overhead.
+    $engineJob = Start-Job -ScriptBlock {
+        param($Eng, $Prompt, $MArgs, $EnvPath)
+        $env:PATH = $EnvPath  # propagate PATH so engine CLIs are resolvable in the job runspace
+        switch ($Eng) {
+            "gemini"  { & gemini  -p $Prompt -y @MArgs 2>&1 }
+            "claude"  { & claude  -p $Prompt --dangerously-skip-permissions @MArgs 2>&1 }
+            "copilot" { & copilot -p $Prompt --allow-all-tools @MArgs 2>&1 }
+        }
+        "RALPH_EXIT:$LASTEXITCODE"  # sentinel line to propagate exit code back to parent
+    } -ArgumentList $Engine, $FullPrompt, $ModelArgs, $env:PATH
+
+    $deadline  = (Get-Date).AddSeconds($AgentTimeout)
     $LogWriter = [System.IO.StreamWriter]::new($LogFile, $false, [System.Text.Encoding]::UTF8)
     try {
-        switch ($Engine) {
-            "gemini"  { & gemini  -p $FullPrompt -y @ModelArgs 2>&1 }
-            "claude"  { & claude  -p $FullPrompt --dangerously-skip-permissions @ModelArgs 2>&1 }
-            "copilot" { & copilot -p $FullPrompt --allow-all-tools @ModelArgs 2>&1 }
-            default   { Write-Error "ERROR: Unknown engine '$Engine'."; exit 1 }
-        } | ForEach-Object {
-            $line = $_
-            # Always log raw output
+        # Poll job output at 200ms intervals while respecting the timeout deadline
+        while ($engineJob.State -eq 'Running') {
+            if ((Get-Date) -gt $deadline) {
+                Stop-Job -Job $engineJob
+                $TimedOut = $true
+                Write-Warning "[AGENT TIMEOUT] Agent exceeded ${AgentTimeout}s wall-clock limit. Stopping."
+                break
+            }
+            foreach ($line in @(Receive-Job -Job $engineJob -ErrorAction SilentlyContinue)) {
+                if ($line -match '^RALPH_EXIT:(\d+)$') { $EngineExitCode = [int]$Matches[1]; continue }
+                $LogWriter.WriteLine($line)
+                if (-not $TokenRotate) {
+                    Write-Host $line
+                    $TotalChars += $line.Length + 1
+                    if (-not $Warned -and $TotalChars -ge $WarnChars) {
+                        $Warned = $true
+                        Write-Warning "[TOKEN WARNING] Approaching context limit. Finish current step and exit."
+                    }
+                    if ($TotalChars -ge $RotateChars) {
+                        Write-Warning "[TOKEN ROTATE] Context limit reached. Stopping display."
+                        $TokenRotate = $true
+                    }
+                }
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        # Drain remaining output after job completes or is stopped
+        foreach ($line in @(Receive-Job -Job $engineJob -ErrorAction SilentlyContinue)) {
+            if ($line -match '^RALPH_EXIT:(\d+)$') { $EngineExitCode = [int]$Matches[1]; continue }
             $LogWriter.WriteLine($line)
-            # Display and count tokens until rotate threshold
             if (-not $TokenRotate) {
                 Write-Host $line
                 $TotalChars += $line.Length + 1
@@ -190,13 +242,17 @@ while ($true) {
                     $TokenRotate = $true
                 }
             }
-            # After rotate threshold, continue consuming pipeline output silently to avoid
-            # blocking the engine process on a full write buffer.
         }
     } finally {
         $LogWriter.Dispose()
+        Remove-Job -Job $engineJob -Force 2>$null
     }
-    $EngineExitCode = $LASTEXITCODE
+
+    if ($TimedOut) {
+        $EngineExitCode = 1
+        $now = Get-Date -Format "yyyy-MM-dd HH:mm"
+        Add-Content ".ralph/progress.md" "- **[$now]** (Iteration $Iteration) fail: Iteration $Iteration timeout. Reason: Agent exceeded RALPH_AGENT_TIMEOUT=${AgentTimeout}s. Avoid: reduce task scope or increase RALPH_AGENT_TIMEOUT."
+    }
 
     if ($TokenRotate) {
         Write-Host "Token rotate: context limit reached. Treating as clean iteration end."
@@ -219,8 +275,9 @@ while ($true) {
             $CommitType    = "chore"
             $CommitSummary = "Iteration $Iteration automated progress sync"
         }
-        # Sanitize commit message: strip backticks and $ to prevent shell injection.
-        $SafeSummary = $CommitSummary -replace '[`$]', ''
+        # Sanitize commit message (T4.1): strip markdown headings, backticks, $, cap at 1000 chars.
+        $SafeSummary = $CommitSummary -replace '(?m)^##[^\r\n]*', '' -replace '[`$]', ''
+        if ($SafeSummary.Length -gt 1000) { $SafeSummary = $SafeSummary.Substring(0, 1000) }
         $CommitMsg   = "${CommitType}(ralph): $SafeSummary"
 
         git add -u
@@ -282,6 +339,22 @@ while ($true) {
         }
         Write-Host "WARNING: No pending tasks remain but mission is not complete. Stopping loop." -ForegroundColor Yellow
         exit 2
+    }
+
+    # Exponential backoff on consecutive no-progress iterations (T3.1 + T7.1)
+    $madeProgress = [bool]$gitStatus
+    if (-not $madeProgress) {
+        $ConsecutiveFailBatches++
+        $backoffBase = [Math]::Pow(2, [Math]::Min($ConsecutiveFailBatches, 30))
+        if ($ConsecutiveFailBatches -ge $CircuitBreaker) {
+            $backoffBase = $backoffBase * $ConsecutiveFailBatches
+        }
+        $jitter   = Get-Random -Minimum 0 -Maximum 5
+        $sleepSec = [int][Math]::Min($backoffBase + $jitter, $BackoffMax)
+        Write-Host "No-progress iteration #${ConsecutiveFailBatches}. Backing off for ${sleepSec}s..."
+        Start-Sleep -Seconds $sleepSec
+    } else {
+        $ConsecutiveFailBatches = 0
     }
 
     Write-Host "Iteration $Iteration complete. Reloading with fresh context..."

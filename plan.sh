@@ -17,6 +17,15 @@ MODEL=${2:-""}
 MODE=${3:-"plan"}
 WORK_SCOPE=${4:-""}
 
+# ENGINE allowlist validation (T1)
+case "$ENGINE" in
+    gemini|claude|copilot) ;;
+    *)
+        echo "ERROR: Unknown engine '$ENGINE'. Use 'gemini', 'claude', or 'copilot'." >&2
+        exit 1
+        ;;
+esac
+
 MODEL_ARGS=()
 [ -n "$MODEL" ] && MODEL_ARGS=("--model" "$MODEL")
 SPEC_FILE=".ralph/spec.md"

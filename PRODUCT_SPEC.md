@@ -286,6 +286,11 @@ Every iteration produces exactly one git commit (per task). If an iteration prod
 | `RALPH_TOKEN_ROTATE` | User (optional) | Token count for rotate threshold (default: 128000); parser exits 10, loop treats as clean end |
 | `RALPH_GUTTER_LOOKBACK` | User (optional) | Number of recent progress entries to examine for stuck-loop patterns (default: 6) |
 | `WORK_SCOPE` | `loop.sh` / `plan.sh` (auto) | Injected into `plan-work.md` via envsubst substitution |
+| `RALPH_AGENT_TIMEOUT` | User (optional) | Per-agent wall-clock timeout in seconds (default: 1800 = 30m); requires `timeout(1)` on Linux/macOS. Agents exceeding this limit are killed and their task marked failed. Set to a shorter value (e.g. `10`) to test timeout behavior. |
+| `RALPH_SPAWN_DELAY` | User (optional) | Delay in seconds between parallel agent launches (default: 2); reduces API burst when dispatching multiple agents simultaneously. Set to `0` to disable. |
+| `RALPH_BACKOFF_MAX` | User (optional) | Maximum exponential backoff sleep in seconds (default: 300 = 5m); caps the delay applied when consecutive batches all fail. Must be a positive integer. |
+| `RALPH_CIRCUIT_BREAKER` | User (optional) | Number of consecutive all-fail batches before escalated delay kicks in (default: 3); multiplies the backoff by the failure count once threshold is reached. Must be a positive integer. |
+| `RALPH_MAX_LOG_SIZE` | User (optional) | Maximum per-iteration log file size in bytes (default: 52428800 = 50MB); when exceeded, the oldest half of the log is truncated. Checked once per iteration at the token warn threshold. |
 
 ### File Paths (relative to project root)
 
@@ -372,11 +377,13 @@ An agent may optionally read `.ralph/logs/iteration_N.log` for a direct dependen
 |:---|:---|:---|
 | No inter-iteration memory | By design -- guarantees fresh context | All state must flow through spec.md |
 | Single-repo scope | Each loop instance operates on one repo | Run separate loops for multi-repo projects |
-| No parallel task execution | One task per turn, sequential only | Decompose parallel work into sequential tasks with documented independence |
 | Scores are immutable during execution | By design -- prevents agent score manipulation | Edit spec.md manually between runs if re-scoring is needed |
 | loop.ps1 gutter detection requires bash | Calls stream/gutter.sh via bash | Install Git Bash or WSL on Windows; gutter check is skipped if bash is not on PATH |
 | Copilot engine has no streaming output parsing | copilot CLI limitation | Output is buffered; use gemini or claude for real-time visibility |
 | jq required for real-time Claude output | External dependency | Install jq or accept buffered output fallback |
+| `timeout(1)` required for per-agent timeout | Linux/macOS coreutils | Install coreutils; graceful degradation (warning printed, agents run without timeout) if missing |
+| loop.ps1 uses Start-Job polling (200ms interval) | PowerShell job model | Output is near-real-time (200ms latency); use loop.sh for true streaming on Linux/macOS |
+| Exponential backoff delays all-fail batches | Intentional backpressure | Reduce `RALPH_BACKOFF_MAX` (minimum: 1) or `RALPH_CIRCUIT_BREAKER` to limit escalation; backoff only activates on complete batch failure |
 
 ---
 

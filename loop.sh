@@ -34,12 +34,37 @@ export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
 # Parallel execution settings (overridable via env vars)
 MAX_PARALLEL=${MAX_PARALLEL:-5}
 RALPH_MAX_RETRIES=${RALPH_MAX_RETRIES:-3}
+# Backpressure and timeout settings (T2, T3, T6, T7)
+RALPH_AGENT_TIMEOUT=${RALPH_AGENT_TIMEOUT:-1800}
+RALPH_BACKOFF_MAX=${RALPH_BACKOFF_MAX:-300}
+RALPH_CIRCUIT_BREAKER=${RALPH_CIRCUIT_BREAKER:-3}
+RALPH_SPAWN_DELAY=${RALPH_SPAWN_DELAY:-2}
 
 if ! [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: MAX_PARALLEL must be a positive integer, got '$MAX_PARALLEL'." >&2; exit 1
 fi
 if ! [[ "$RALPH_MAX_RETRIES" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: RALPH_MAX_RETRIES must be a positive integer, got '$RALPH_MAX_RETRIES'." >&2; exit 1
+fi
+if ! [[ "$RALPH_AGENT_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: RALPH_AGENT_TIMEOUT must be a positive integer, got '$RALPH_AGENT_TIMEOUT'." >&2; exit 1
+fi
+if ! [[ "$RALPH_BACKOFF_MAX" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: RALPH_BACKOFF_MAX must be a positive integer, got '$RALPH_BACKOFF_MAX'." >&2; exit 1
+fi
+if ! [[ "$RALPH_CIRCUIT_BREAKER" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: RALPH_CIRCUIT_BREAKER must be a positive integer, got '$RALPH_CIRCUIT_BREAKER'." >&2; exit 1
+fi
+if ! [[ "$RALPH_SPAWN_DELAY" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: RALPH_SPAWN_DELAY must be a non-negative integer, got '$RALPH_SPAWN_DELAY'." >&2; exit 1
+fi
+
+# Check for timeout(1) availability (T2: graceful degradation if missing)
+HAS_TIMEOUT=false
+if command -v timeout &>/dev/null; then
+    HAS_TIMEOUT=true
+else
+    echo "NOTE: timeout(1) not found. Agents will run without per-agent wall-clock timeout. Install coreutils for timeout support." >&2
 fi
 
 # Global state for worktree tracking (accessed by trap handler and cleanup function).
@@ -104,6 +129,15 @@ PUSH_CHANGES=${3:-true}
 MODEL=${4:-""}
 MODE=${5:-"build"}
 WORK_SCOPE=${6:-""}
+
+# ENGINE allowlist validation (T1)
+case "$ENGINE" in
+    gemini|claude|copilot) ;;
+    *)
+        echo "ERROR: Unknown engine '$ENGINE'. Use 'gemini', 'claude', or 'copilot'." >&2
+        exit 1
+        ;;
+esac
 
 MODEL_ARGS=()
 [ -n "$MODEL" ] && MODEL_ARGS=("--model" "$MODEL")
@@ -254,17 +288,20 @@ fi
 # Runs the engine pipeline and stores exit codes in DISPATCH_PIPE_STATUSES:
 #   [0] = engine exit code, [1] = parser exit code (10 = token rotate).
 # Callers must read DISPATCH_PIPE_STATUSES immediately after this returns.
+# Per-agent wall-clock timeout applied via timeout(1) when HAS_TIMEOUT=true (T2).
 dispatch_engine() {
     local prompt="$1"
+    local timeout_cmd=()
+    [ "$HAS_TIMEOUT" = "true" ] && timeout_cmd=("timeout" "$RALPH_AGENT_TIMEOUT")
     export LOG_FILE ENGINE
     if [ "$ENGINE" = "gemini" ]; then
-        gemini -p "$prompt" -y "${MODEL_ARGS[@]}" 2>&1 | bash "$PARSER"
+        "${timeout_cmd[@]}" gemini -p "$prompt" -y "${MODEL_ARGS[@]}" 2>&1 | bash "$PARSER"
         DISPATCH_PIPE_STATUSES=("${PIPESTATUS[@]}")
     elif [ "$ENGINE" = "claude" ]; then
-        claude -p "$prompt" --dangerously-skip-permissions --output-format stream-json --verbose "${MODEL_ARGS[@]}" </dev/null 2>&1 | bash "$PARSER"
+        "${timeout_cmd[@]}" claude -p "$prompt" --dangerously-skip-permissions --output-format stream-json --verbose "${MODEL_ARGS[@]}" </dev/null 2>&1 | bash "$PARSER"
         DISPATCH_PIPE_STATUSES=("${PIPESTATUS[@]}")
     elif [ "$ENGINE" = "copilot" ]; then
-        copilot -p "$prompt" --allow-all-tools "${MODEL_ARGS[@]}" 2>&1 | bash "$PARSER"
+        "${timeout_cmd[@]}" copilot -p "$prompt" --allow-all-tools "${MODEL_ARGS[@]}" 2>&1 | bash "$PARSER"
         DISPATCH_PIPE_STATUSES=("${PIPESTATUS[@]}")
     else
         echo "ERROR: Unknown engine '$ENGINE'. Use 'gemini', 'claude', or 'copilot'." >&2
@@ -371,12 +408,17 @@ select_parallel_tasks() {
     ' "$spec"
 }
 
-# Return the last N failure log lines for a task from the main worktree's progress.md
+# Return the last N failure log lines for a task from the main worktree's progress.md.
+# Output is sanitized (T4): strip markdown headings, backticks, cap at 1000 bytes.
 get_retry_context() {
     local task_id="$1"
     # grep -F: fixed-string match so T1.1's dot does not act as a regex wildcard.
-    # grep -v '^##': strip any markdown heading injections a prior agent may have written.
-    [ -f ".ralph/progress.md" ] && grep -F "fail: ${task_id} failed" ".ralph/progress.md" | grep -v '^##' | tail -3 || true
+    [ -f ".ralph/progress.md" ] && grep -F "fail: ${task_id} failed" ".ralph/progress.md" \
+        | grep -v '^##' \
+        | tail -3 \
+        | tr -d '`' \
+        | head -c 1000 \
+        || true
 }
 
 # Build a prompt with an orchestrator preamble prepended to the base prompt.
@@ -727,6 +769,9 @@ fi
 # build mode: parallel batch execution with git worktrees
 # =============================================================================
 
+# Consecutive all-fail batch counter for exponential backoff (T3 + T7)
+CONSECUTIVE_FAIL_BATCHES=0
+
 while true; do
     # Read current iteration counter from spec (so resuming after interruption works)
     BASE_ITERATION=$(sed -n 's/.*\*\*Current Iteration\*\*: \([0-9][0-9]*\).*/\1/p' "$SPEC_FILE" 2>/dev/null | head -1)
@@ -895,6 +940,9 @@ while true; do
 
     # Spawn parallel agents (one per task)
     for _i in "${!VALID_TASK_PAIRS[@]}"; do
+        # Inter-spawn stagger delay (T6): skip on first agent to avoid unnecessary wait
+        [ "$_i" -gt 0 ] && [ "$RALPH_SPAWN_DELAY" -gt 0 ] && sleep "$RALPH_SPAWN_DELAY"
+
         task_pair="${VALID_TASK_PAIRS[$_i]}"
         task_id="${task_pair%%:*}"
         iteration="${AGENT_ITERATIONS[$_i]}"
@@ -1046,6 +1094,24 @@ while true; do
         fi
         echo "WARNING: No pending tasks remain and no progress made. Stopping loop." >&2
         exit 2
+    fi
+
+    # Exponential backoff on consecutive all-fail batches (T3 + T7)
+    if [ "$N_MERGED" -eq 0 ]; then
+        CONSECUTIVE_FAIL_BATCHES=$((CONSECUTIVE_FAIL_BATCHES + 1))
+        # 2^n backoff: cap the shift to avoid integer overflow
+        _shift=$(( CONSECUTIVE_FAIL_BATCHES < 30 ? CONSECUTIVE_FAIL_BATCHES : 30 ))
+        _backoff=$(( 1 << _shift ))
+        # T7: circuit breaker — escalate delay after RALPH_CIRCUIT_BREAKER consecutive failures
+        if [ "$CONSECUTIVE_FAIL_BATCHES" -ge "$RALPH_CIRCUIT_BREAKER" ]; then
+            _backoff=$(( _backoff * CONSECUTIVE_FAIL_BATCHES ))
+        fi
+        _jitter=$(( RANDOM % 5 ))
+        _sleep=$(( (_backoff + _jitter) > RALPH_BACKOFF_MAX ? RALPH_BACKOFF_MAX : (_backoff + _jitter) ))
+        echo "All-fail batch #${CONSECUTIVE_FAIL_BATCHES}. Backing off for ${_sleep}s before next batch..."
+        sleep "$_sleep"
+    else
+        CONSECUTIVE_FAIL_BATCHES=0
     fi
 
     echo "Batch complete (${N_MERGED}/${N_TASKS} merged). Reloading with fresh context..."

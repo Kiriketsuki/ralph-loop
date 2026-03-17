@@ -1,11 +1,17 @@
 param(
-    [string][ValidateSet("gemini", "claude", "copilot")]$Engine = "gemini",
+    [string]$Engine = "gemini",
     [string]$Model = "",
     [string][ValidateSet("plan", "plan-work")]$Mode = "plan",
     [string]$WorkScope = ""
 )
 
 $env:CLAUDE_CODE_MAX_OUTPUT_TOKENS = "64000"
+
+# ENGINE allowlist validation (T1.1)
+if ($Engine -notin @("gemini", "claude", "copilot")) {
+    Write-Error "ERROR: Unknown engine '$Engine'. Use 'gemini', 'claude', or 'copilot'."
+    exit 1
+}
 
 # .ralph/plan.ps1 - Interactive Ralph Loop Planning Session (PowerShell) v2
 # Run from the project root directory.
