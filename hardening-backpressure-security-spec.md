@@ -203,8 +203,8 @@ Feature: Hardening, Backpressure, and Security
 | T7 | Batch-level circuit breaker (`loop.sh`) | Med | T3 | completed |
 | T7.1 | Batch-level circuit breaker in `loop.ps1` | Med | T3.1, T7 | completed |
 | T8 | Log file size cap in `parser.sh` | Med | None | completed |
-| T9 | Sliding window `wait -n` worker pool (`loop.sh`) | Low | T2 | pending |
-| T10 | Env var path validation in `parser.sh`/`gutter.sh` | Low | None | pending |
+| T9 | Sliding window `wait -n` worker pool (`loop.sh`) | Low | T2 | completed |
+| T10 | Env var path validation in `parser.sh`/`gutter.sh` | Low | None | completed |
 | T11 | Update PRODUCT_SPEC.md and README.md with new env vars and hardening docs | Med | T1-T8 | completed |
 
 ---

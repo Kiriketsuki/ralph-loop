@@ -67,6 +67,16 @@ else
     echo "NOTE: timeout(1) not found. Agents will run without per-agent wall-clock timeout. Install coreutils for timeout support." >&2
 fi
 
+# Sliding window: detect bash version for wait -n and wait -n -p support (T9)
+HAS_WAIT_N=false
+HAS_WAIT_N_P=false
+if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 3 ]; }; then
+    HAS_WAIT_N=true
+fi
+if [ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+    HAS_WAIT_N_P=true
+fi
+
 # Global state for worktree tracking (accessed by trap handler and cleanup function).
 # Parallel indexed arrays — bash 3.2-compatible replacement for declare -A.
 # Index i in each array corresponds to VALID_TASK_PAIRS[i] set during batch setup.
@@ -657,6 +667,78 @@ update_parent_tasks() {
     ' ".ralph/spec.md" ".ralph/spec.md" > ".ralph/spec.md.tmp" && mv ".ralph/spec.md.tmp" ".ralph/spec.md"
 }
 
+# Process a completed agent's result: merge on success or handle failure.
+# Arg 1: index into VALID_TASK_PAIRS / AGENT_EXIT_CODES / TASK_WORKTREES / TASK_BRANCHES / AGENT_ITERATIONS
+# Reads globals: VALID_TASK_PAIRS, AGENT_EXIT_CODES, TASK_WORKTREES, TASK_BRANCHES, AGENT_ITERATIONS
+# Modifies global: N_MERGED
+process_agent_result() {
+    local _i="$1"
+    local task_pair task_id exit_code task_worktree task_branch iteration task_wt_status
+    task_pair="${VALID_TASK_PAIRS[$_i]}"
+    task_id="${task_pair%%:*}"
+    exit_code="${AGENT_EXIT_CODES[$_i]}"
+    task_worktree="${TASK_WORKTREES[$_i]}"
+    task_branch="${TASK_BRANCHES[$_i]}"
+    iteration="${AGENT_ITERATIONS[$_i]}"
+
+    if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 10 ]; then
+        if [ "$exit_code" -eq 10 ]; then
+            # Token rotate: check whether the agent actually updated the task status.
+            # If the task is still 'pending' in the worktree spec, the agent was cut off
+            # before finishing — skip the merge so the task retries naturally next batch.
+            task_wt_status=$(awk -F'|' -v id="$task_id" '
+                /\| *(completed|failed|blocked|pending|proposed) *\|/ {
+                    tid = $2; gsub(/[[:space:]]/, "", tid)
+                    if (tid == id) { st = $9; gsub(/[[:space:]]/, "", st); print st; exit }
+                }
+            ' "${task_worktree}/.ralph/spec.md" 2>/dev/null)
+            if [ "$task_wt_status" = "pending" ]; then
+                echo "  Token rotate: ${task_id} still pending — skipping merge, task will retry." >&2
+                printf '%s\n' "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${iteration}) chore: ${task_id} token-rotated before completion. Task will retry next batch." >> ".ralph/progress.md"
+                return 0
+            fi
+            echo "  Token rotate for ${task_id}: task was updated, proceeding with merge."
+        fi
+        if commit_and_merge "$task_id" "$task_worktree" "$task_branch" "$iteration"; then
+            N_MERGED=$((N_MERGED + 1))
+            echo "  Merged: ${task_id}"
+            # Detect protocol-compliant failure: agent exited 0 but marked task failed in spec
+            if grep -qE "\| *${task_id} *\|.*\| *failed *\|" ".ralph/spec.md"; then
+                echo "  Protocol failure detected for ${task_id} — checking retry budget." >&2
+                handle_failed_agent "$task_id" "$task_worktree" "true"
+                # If max retries not yet exhausted (task still failed, not blocked), reset to pending
+                if grep -qE "\| *${task_id} *\|.*\| *failed *\|" ".ralph/spec.md"; then
+                    awk -F'|' -v task="${task_id}" '
+                    BEGIN { OFS="|" }
+                    {
+                        id = $2; gsub(/[[:space:]]/, "", id)
+                        st = $9; gsub(/[[:space:]]/, "", st)
+                        if (id == task && st == "failed") $9 = " pending "
+                        print
+                    }' ".ralph/spec.md" > ".ralph/spec.md.tmp" && mv ".ralph/spec.md.tmp" ".ralph/spec.md"
+                    echo "  Reset ${task_id} from failed -> pending for retry." >&2
+                fi
+            fi
+        else
+            echo "  Source conflict for ${task_id}: will retry next batch." >&2
+            # Use merge-conflict: prefix (not fail:) so it is excluded from RALPH_MAX_RETRIES
+            # counting. The agent itself succeeded; only the merge failed due to sibling conflict.
+            echo "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${iteration}) merge-conflict: ${task_id} deferred. Reason: source file merge conflict with concurrent task." >> ".ralph/progress.md"
+            # Do NOT call handle_failed_agent — task stays pending and will be retried next batch
+        fi
+    else
+        echo "  Agent failed: ${task_id} (exit: $exit_code)" >&2
+        # If the agent crashed without writing a failure entry, generate a synthetic one so
+        # RALPH_MAX_RETRIES counting works and the task can eventually be auto-blocked.
+        if ! grep -qF "fail: ${task_id} failed" "${task_worktree}/.ralph/progress.md" 2>/dev/null; then
+            printf '%s\n' "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${iteration}) fail: ${task_id} failed. Reason: Agent exited with code ${exit_code} without writing a failure entry (possible crash or OOM). Avoid: check engine stability and reduce task scope." >> ".ralph/progress.md"
+            handle_failed_agent "$task_id" "$task_worktree" "true"
+        else
+            handle_failed_agent "$task_id" "$task_worktree"
+        fi
+    fi
+}
+
 # =============================================================================
 # Build mode worktree setup (runs once before the main loop)
 # =============================================================================
@@ -938,6 +1020,9 @@ while true; do
     # Restrict prompt file permissions: contains full task context, must not be world-readable
     umask 077
 
+    # Snapshot completed task count before spawning — used by circuit breaker to detect real progress
+    COMPLETED_BEFORE=$(grep -cE '\| *completed *\|' "$SPEC_FILE" 2>/dev/null || echo 0)
+
     # Spawn parallel agents (one per task)
     for _i in "${!VALID_TASK_PAIRS[@]}"; do
         # Inter-spawn stagger delay (T6): skip on first agent to avoid unnecessary wait
@@ -961,87 +1046,69 @@ while true; do
     # Restore default umask after all prompt files have been written
     umask 022
 
-    # Wait for all agents and collect exit codes
-    for _i in "${!VALID_TASK_PAIRS[@]}"; do
-        task_id="${VALID_TASK_PAIRS[$_i]%%:*}"
-        wait "${AGENT_PIDS[$_i]}" 2>/dev/null
-        AGENT_EXIT_CODES[$_i]=$?
-        echo "  Agent done: ${task_id} -> exit ${AGENT_EXIT_CODES[$_i]}"
-    done
-
-    # Process results in score order (VALID_TASK_PAIRS preserves selection order)
+    # Wait for all agents, process results in completion order when available (T9)
     N_MERGED=0
-    for _i in "${!VALID_TASK_PAIRS[@]}"; do
-        task_pair="${VALID_TASK_PAIRS[$_i]}"
-        task_id="${task_pair%%:*}"
-        exit_code="${AGENT_EXIT_CODES[$_i]}"
-        task_worktree="${TASK_WORKTREES[$_i]}"
-        task_branch="${TASK_BRANCHES[$_i]}"
-        iteration="${AGENT_ITERATIONS[$_i]}"
-
-        if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 10 ]; then
-            if [ "$exit_code" -eq 10 ]; then
-                # Token rotate: check whether the agent actually updated the task status.
-                # If the task is still 'pending' in the worktree spec, the agent was cut off
-                # before finishing — skip the merge so the task retries naturally next batch.
-                task_wt_status=$(awk -F'|' -v id="$task_id" '
-                    /\| *(completed|failed|blocked|pending|proposed) *\|/ {
-                        tid = $2; gsub(/[[:space:]]/, "", tid)
-                        if (tid == id) { st = $9; gsub(/[[:space:]]/, "", st); print st; exit }
-                    }
-                ' "${task_worktree}/.ralph/spec.md" 2>/dev/null)
-                if [ "$task_wt_status" = "pending" ]; then
-                    echo "  Token rotate: ${task_id} still pending — skipping merge, task will retry." >&2
-                    printf '%s\n' "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${iteration}) chore: ${task_id} token-rotated before completion. Task will retry next batch." >> ".ralph/progress.md"
-                    continue
-                fi
-                echo "  Token rotate for ${task_id}: task was updated, proceeding with merge."
-            fi
-            if commit_and_merge "$task_id" "$task_worktree" "$task_branch" "$iteration"; then
-                N_MERGED=$((N_MERGED + 1))
-                echo "  Merged: ${task_id}"
-                # Detect protocol-compliant failure: agent exited 0 but marked task failed in spec
-                if grep -qE "\| *${task_id} *\|.*\| *failed *\|" ".ralph/spec.md"; then
-                    echo "  Protocol failure detected for ${task_id} — checking retry budget." >&2
-                    handle_failed_agent "$task_id" "$task_worktree" "true"
-                    # If max retries not yet exhausted (task still failed, not blocked), reset to pending
-                    if grep -qE "\| *${task_id} *\|.*\| *failed *\|" ".ralph/spec.md"; then
-                        awk -F'|' -v task="${task_id}" '
-                        BEGIN { OFS="|" }
-                        {
-                            id = $2; gsub(/[[:space:]]/, "", id)
-                            st = $9; gsub(/[[:space:]]/, "", st)
-                            if (id == task && st == "failed") $9 = " pending "
-                            print
-                        }' ".ralph/spec.md" > ".ralph/spec.md.tmp" && mv ".ralph/spec.md.tmp" ".ralph/spec.md"
-                        echo "  Reset ${task_id} from failed -> pending for retry." >&2
+    if [ "$HAS_WAIT_N" = "true" ]; then
+        # Sliding window: process agents as they complete (bash 4.3+)
+        REMAINING_INDICES=("${!VALID_TASK_PAIRS[@]}")
+        while [ ${#REMAINING_INDICES[@]} -gt 0 ]; do
+            _remaining_pids=()
+            for _ri in "${REMAINING_INDICES[@]}"; do
+                _remaining_pids+=("${AGENT_PIDS[$_ri]}")
+            done
+            _new_remaining=()
+            if [ "$HAS_WAIT_N_P" = "true" ]; then
+                # bash 5.1+: wait -n -p captures the finished PID directly
+                _finished_pid=""
+                wait -n -p _finished_pid "${_remaining_pids[@]}" 2>/dev/null
+                _exit_code=$?
+                for _ri in "${REMAINING_INDICES[@]}"; do
+                    if [ "${AGENT_PIDS[$_ri]}" = "$_finished_pid" ]; then
+                        AGENT_EXIT_CODES[$_ri]=$_exit_code
+                        task_id="${VALID_TASK_PAIRS[$_ri]%%:*}"
+                        echo "  Agent done: ${task_id} -> exit ${AGENT_EXIT_CODES[$_ri]}"
+                        process_agent_result "$_ri"
+                    else
+                        _new_remaining+=("$_ri")
                     fi
-                fi
+                done
             else
-                echo "  Source conflict for ${task_id}: will retry next batch." >&2
-                # Use merge-conflict: prefix (not fail:) so it is excluded from RALPH_MAX_RETRIES
-                # counting. The agent itself succeeded; only the merge failed due to sibling conflict.
-                echo "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${iteration}) merge-conflict: ${task_id} deferred. Reason: source file merge conflict with concurrent task." >> ".ralph/progress.md"
-                # Do NOT call handle_failed_agent — task stays pending and will be retried next batch
+                # bash 4.3–5.0: probe all remaining PIDs after wait -n to find finished ones
+                wait -n "${_remaining_pids[@]}" 2>/dev/null || true
+                for _ri in "${REMAINING_INDICES[@]}"; do
+                    if ! kill -0 "${AGENT_PIDS[$_ri]}" 2>/dev/null; then
+                        wait "${AGENT_PIDS[$_ri]}" 2>/dev/null
+                        AGENT_EXIT_CODES[$_ri]=$?
+                        task_id="${VALID_TASK_PAIRS[$_ri]%%:*}"
+                        echo "  Agent done: ${task_id} -> exit ${AGENT_EXIT_CODES[$_ri]}"
+                        process_agent_result "$_ri"
+                    else
+                        _new_remaining+=("$_ri")
+                    fi
+                done
             fi
-        else
-            echo "  Agent failed: ${task_id} (exit: $exit_code)" >&2
-            # If the agent crashed without writing a failure entry, generate a synthetic one so
-            # RALPH_MAX_RETRIES counting works and the task can eventually be auto-blocked.
-            if ! grep -qF "fail: ${task_id} failed" "${task_worktree}/.ralph/progress.md" 2>/dev/null; then
-                printf '%s\n' "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${iteration}) fail: ${task_id} failed. Reason: Agent exited with code ${exit_code} without writing a failure entry (possible crash or OOM). Avoid: check engine stability and reduce task scope." >> ".ralph/progress.md"
-                handle_failed_agent "$task_id" "$task_worktree" "true"
-            else
-                handle_failed_agent "$task_id" "$task_worktree"
-            fi
-        fi
-    done
+            REMAINING_INDICES=("${_new_remaining[@]}")
+        done
+    else
+        # Fallback: original fork-join (bash < 4.3, e.g. macOS default 3.2)
+        for _i in "${!VALID_TASK_PAIRS[@]}"; do
+            task_id="${VALID_TASK_PAIRS[$_i]%%:*}"
+            wait "${AGENT_PIDS[$_i]}" 2>/dev/null
+            AGENT_EXIT_CODES[$_i]=$?
+            echo "  Agent done: ${task_id} -> exit ${AGENT_EXIT_CODES[$_i]}"
+        done
+        for _i in "${!VALID_TASK_PAIRS[@]}"; do
+            process_agent_result "$_i"
+        done
+    fi
 
     # Reconcile spec.md iteration counter and timestamp, then check parent completion.
     # Advance by N_MERGED (not N_TASKS) so failed-only batches don't wastefully consume
     # the entire max_iterations budget. Always advance by at least 1 to avoid infinite loops.
     reconcile_spec "$BASE_ITERATION" "$(( N_MERGED > 0 ? N_MERGED : 1 ))"
     update_parent_tasks
+    # Snapshot completed count after merges + parent auto-completion for circuit breaker signal
+    COMPLETED_AFTER=$(grep -cE '\| *completed *\|' "$SPEC_FILE" 2>/dev/null || echo 0)
 
     # Check if all tasks are done — set VERIFICATION_PENDING for the next iteration
     if ! grep -qE "\| *pending *\|" "$SPEC_FILE" \
@@ -1097,7 +1164,9 @@ while true; do
     fi
 
     # Exponential backoff on consecutive all-fail batches (T3 + T7)
-    if [ "$N_MERGED" -eq 0 ]; then
+    # Use completed-task delta (not N_MERGED) so batches where all merges wrote 'failed' still
+    # trigger backoff — N_MERGED counts git merges, not real progress toward completion.
+    if [ "$COMPLETED_AFTER" -le "$COMPLETED_BEFORE" ]; then
         CONSECUTIVE_FAIL_BATCHES=$((CONSECUTIVE_FAIL_BATCHES + 1))
         # 2^n backoff: cap the shift to avoid integer overflow
         _shift=$(( CONSECUTIVE_FAIL_BATCHES < 30 ? CONSECUTIVE_FAIL_BATCHES : 30 ))

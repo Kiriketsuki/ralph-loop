@@ -22,6 +22,14 @@
 # Gutter detection remains effective across sequential batches (e.g. the same task failing
 # repeatedly across multiple batch cycles will be caught by the repetition check).
 PROGRESS_FILE="${PROGRESS_FILE:-.ralph/progress.md}"
+case "$PROGRESS_FILE" in
+    *$'\n'*) echo "ERROR: PROGRESS_FILE contains newline — rejected" >&2; exit 1 ;;
+    *..*) echo "ERROR: PROGRESS_FILE contains '..' — path traversal rejected: $PROGRESS_FILE" >&2; exit 1 ;;
+    /*) echo "ERROR: PROGRESS_FILE must be a relative path under .ralph/ — rejected: $PROGRESS_FILE" >&2; exit 1 ;;
+esac
+if [ "${PROGRESS_FILE#.ralph/}" = "$PROGRESS_FILE" ]; then
+    echo "ERROR: PROGRESS_FILE must start with .ralph/ — got: $PROGRESS_FILE" >&2; exit 1
+fi
 LOOKBACK="${RALPH_GUTTER_LOOKBACK:-6}"
 
 if [ ! -f "$PROGRESS_FILE" ]; then

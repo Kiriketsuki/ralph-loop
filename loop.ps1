@@ -178,6 +178,9 @@ while ($true) {
     # Snapshot pending task count before invocation for plan-work completion detection.
     $PendingBefore = (Select-String -Path $SpecFile -Pattern '\|\s*pending\s*\|' -AllMatches |
         Measure-Object).Count
+    # Snapshot completed task count before invocation for circuit breaker signal.
+    $CompletedBefore = (Select-String -Path $SpecFile -Pattern '\|\s*completed\s*\|' -AllMatches |
+        Measure-Object).Count
 
     # --- Invoke engine with per-agent wall-clock timeout via Start-Job (T2.1) ---
     $TotalChars     = 0
@@ -294,6 +297,10 @@ while ($true) {
         }
     }
 
+    # Snapshot completed count after commit for circuit breaker signal (captures parent auto-completion)
+    $CompletedAfter = (Select-String -Path $SpecFile -Pattern '\|\s*completed\s*\|' -AllMatches |
+        Measure-Object).Count
+
     # --- Gutter detection (after commit so diagnostics are preserved on exit 4) ---
     $GutterScript = ".ralph/stream/gutter.sh"
     $bashCmd = Get-Command bash -ErrorAction SilentlyContinue
@@ -342,7 +349,9 @@ while ($true) {
     }
 
     # Exponential backoff on consecutive no-progress iterations (T3.1 + T7.1)
-    $madeProgress = [bool]$gitStatus
+    # Use completed-task delta so iterations where the agent merges but writes 'failed'
+    # still trigger backoff — git changes alone don't indicate real progress.
+    $madeProgress = ($CompletedAfter -gt $CompletedBefore)
     if (-not $madeProgress) {
         $ConsecutiveFailBatches++
         $backoffBase = [Math]::Pow(2, [Math]::Min($ConsecutiveFailBatches, 30))

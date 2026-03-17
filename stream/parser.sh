@@ -20,6 +20,16 @@
 #   ENGINE             - Engine name, used to decide JSON parsing (optional)
 
 LOG_FILE="${LOG_FILE:-/dev/null}"
+if [ "$LOG_FILE" != "/dev/null" ]; then
+    case "$LOG_FILE" in
+        *$'\n'*) echo "ERROR: LOG_FILE contains newline — rejected" >&2; exit 1 ;;
+        *..*) echo "ERROR: LOG_FILE contains '..' — path traversal rejected: $LOG_FILE" >&2; exit 1 ;;
+        /*) echo "ERROR: LOG_FILE must be a relative path under .ralph/ — rejected: $LOG_FILE" >&2; exit 1 ;;
+    esac
+    if [ "${LOG_FILE#.ralph/}" = "$LOG_FILE" ]; then
+        echo "ERROR: LOG_FILE must start with .ralph/ — got: $LOG_FILE" >&2; exit 1
+    fi
+fi
 # Thresholds in chars (tokens × 4)
 # IMPORTANT: defaults MUST stay in sync with loop.ps1 (token counting section).
 # Validate env vars are plain integers to prevent bash arithmetic injection.
@@ -96,8 +106,12 @@ while IFS= read -r line; do
         if [ "$LOG_FILE" != "/dev/null" ] && [ "$MAX_LOG_SIZE" -gt 0 ]; then
             _log_size=$(stat -c%s "$LOG_FILE" 2>/dev/null || stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
             if [ "$_log_size" -ge "$MAX_LOG_SIZE" ]; then
-                tail -c "$((MAX_LOG_SIZE / 2))" "$LOG_FILE" > "${LOG_FILE}.tmp" 2>/dev/null \
-                    && mv "${LOG_FILE}.tmp" "$LOG_FILE" 2>/dev/null || true
+                _tmp=$(mktemp "${LOG_FILE}.XXXXXX") || true
+                if [ -n "$_tmp" ]; then
+                    tail -c "$((MAX_LOG_SIZE / 2))" "$LOG_FILE" > "$_tmp" 2>/dev/null \
+                        && mv "$_tmp" "$LOG_FILE" 2>/dev/null \
+                        || { rm -f "$_tmp" 2>/dev/null; true; }
+                fi
                 printf '[LOG TRUNCATED] Log exceeded %d bytes. Oldest content removed.\n' "$MAX_LOG_SIZE" >&2
             fi
         fi

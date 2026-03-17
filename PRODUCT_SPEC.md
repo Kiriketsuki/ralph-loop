@@ -384,6 +384,8 @@ An agent may optionally read `.ralph/logs/iteration_N.log` for a direct dependen
 | `timeout(1)` required for per-agent timeout | Linux/macOS coreutils | Install coreutils; graceful degradation (warning printed, agents run without timeout) if missing |
 | loop.ps1 uses Start-Job polling (200ms interval) | PowerShell job model | Output is near-real-time (200ms latency); use loop.sh for true streaming on Linux/macOS |
 | Exponential backoff delays all-fail batches | Intentional backpressure | Reduce `RALPH_BACKOFF_MAX` (minimum: 1) or `RALPH_CIRCUIT_BREAKER` to limit escalation; backoff only activates on complete batch failure |
+| `wait -n` sliding window requires bash 4.3+ | bash version | Automatically detected; falls back to fork-join `wait` loop on bash < 4.3 (e.g. macOS default 3.2) |
+| Circuit breaker tracks task completion count, not git merges | By design — avoids false resets when agents merge-but-fail | Backoff fires correctly when all merges in a batch contain `failed` status; real completions (including parent auto-completion) always reset the counter |
 
 ---
 
