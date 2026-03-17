@@ -28,7 +28,7 @@ _raw_rotate="${RALPH_TOKEN_ROTATE:-128000}"
 _raw_maxlog="${RALPH_MAX_LOG_SIZE:-52428800}"
 case "$_raw_warn"   in ''|*[!0-9]*) echo "ERROR: RALPH_TOKEN_WARN must be a positive integer, got: $_raw_warn" >&2; exit 1;; esac
 case "$_raw_rotate" in ''|*[!0-9]*) echo "ERROR: RALPH_TOKEN_ROTATE must be a positive integer, got: $_raw_rotate" >&2; exit 1;; esac
-case "$_raw_maxlog" in ''|*[!0-9]*) echo "ERROR: RALPH_MAX_LOG_SIZE must be a positive integer, got: $_raw_maxlog" >&2; exit 1;; esac
+case "$_raw_maxlog" in ''|*[!0-9]*) echo "ERROR: RALPH_MAX_LOG_SIZE must be a non-negative integer (0 to disable), got: $_raw_maxlog" >&2; exit 1;; esac
 WARN_CHARS=$(( _raw_warn * 4 ))
 ROTATE_CHARS=$(( _raw_rotate * 4 ))
 MAX_LOG_SIZE=$_raw_maxlog

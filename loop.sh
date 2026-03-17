@@ -292,7 +292,7 @@ fi
 dispatch_engine() {
     local prompt="$1"
     local timeout_cmd=()
-    [ "$HAS_TIMEOUT" = "true" ] && timeout_cmd=("timeout" "$RALPH_AGENT_TIMEOUT")
+    [ "$HAS_TIMEOUT" = "true" ] && timeout_cmd=("timeout" "--kill-after=10" "$RALPH_AGENT_TIMEOUT")
     export LOG_FILE ENGINE
     if [ "$ENGINE" = "gemini" ]; then
         "${timeout_cmd[@]}" gemini -p "$prompt" -y "${MODEL_ARGS[@]}" 2>&1 | bash "$PARSER"
@@ -1102,9 +1102,12 @@ while true; do
         # 2^n backoff: cap the shift to avoid integer overflow
         _shift=$(( CONSECUTIVE_FAIL_BATCHES < 30 ? CONSECUTIVE_FAIL_BATCHES : 30 ))
         _backoff=$(( 1 << _shift ))
+        # Clamp before circuit-breaker multiply to prevent integer overflow on 32-bit bash
+        [ "$_backoff" -gt "$RALPH_BACKOFF_MAX" ] && _backoff="$RALPH_BACKOFF_MAX"
         # T7: circuit breaker — escalate delay after RALPH_CIRCUIT_BREAKER consecutive failures
         if [ "$CONSECUTIVE_FAIL_BATCHES" -ge "$RALPH_CIRCUIT_BREAKER" ]; then
             _backoff=$(( _backoff * CONSECUTIVE_FAIL_BATCHES ))
+            [ "$_backoff" -gt "$RALPH_BACKOFF_MAX" ] && _backoff="$RALPH_BACKOFF_MAX"
         fi
         _jitter=$(( RANDOM % 5 ))
         _sleep=$(( (_backoff + _jitter) > RALPH_BACKOFF_MAX ? RALPH_BACKOFF_MAX : (_backoff + _jitter) ))

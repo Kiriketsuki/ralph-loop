@@ -1,5 +1,5 @@
 param(
-    [string]$Engine = "gemini",
+    [string][ValidateSet("gemini", "claude", "copilot")]$Engine = "gemini",
     [int]$MaxIterations = 20,
     [bool]$Push = $true,
     [string]$Model = "",
@@ -194,7 +194,7 @@ while ($true) {
             "claude"  { & claude  -p $Prompt --dangerously-skip-permissions @MArgs 2>&1 }
             "copilot" { & copilot -p $Prompt --allow-all-tools @MArgs 2>&1 }
         }
-        "RALPH_EXIT:$LASTEXITCODE"  # sentinel line to propagate exit code back to parent
+        "__RALPH_EXITCODE__:$LASTEXITCODE"  # sentinel line to propagate exit code back to parent
     } -ArgumentList $Engine, $FullPrompt, $ModelArgs, $env:PATH
 
     $deadline  = (Get-Date).AddSeconds($AgentTimeout)
@@ -209,7 +209,7 @@ while ($true) {
                 break
             }
             foreach ($line in @(Receive-Job -Job $engineJob -ErrorAction SilentlyContinue)) {
-                if ($line -match '^RALPH_EXIT:(\d+)$') { $EngineExitCode = [int]$Matches[1]; continue }
+                if ($line -match '^__RALPH_EXITCODE__:(\d+)$') { $EngineExitCode = [int]$Matches[1]; continue }
                 $LogWriter.WriteLine($line)
                 if (-not $TokenRotate) {
                     Write-Host $line
@@ -228,7 +228,7 @@ while ($true) {
         }
         # Drain remaining output after job completes or is stopped
         foreach ($line in @(Receive-Job -Job $engineJob -ErrorAction SilentlyContinue)) {
-            if ($line -match '^RALPH_EXIT:(\d+)$') { $EngineExitCode = [int]$Matches[1]; continue }
+            if ($line -match '^__RALPH_EXITCODE__:(\d+)$') { $EngineExitCode = [int]$Matches[1]; continue }
             $LogWriter.WriteLine($line)
             if (-not $TokenRotate) {
                 Write-Host $line

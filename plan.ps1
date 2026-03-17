@@ -1,5 +1,5 @@
 param(
-    [string]$Engine = "gemini",
+    [string][ValidateSet("gemini", "claude", "copilot")]$Engine = "gemini",
     [string]$Model = "",
     [string][ValidateSet("plan", "plan-work")]$Mode = "plan",
     [string]$WorkScope = ""
