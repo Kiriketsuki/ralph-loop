@@ -58,16 +58,16 @@ You are an autonomous agent operating in a headless loop. Your goal is to advanc
    - The **Avoid** section is critical — it feeds into the retry context for the next attempt.
    - **Skip Steps 4–7 entirely.** Proceed directly to Step 8 (Mandatory Exit). The loop orchestrator handles iteration advancement and parent-task completion checks.
 
-4. **Verification Check**:
+4. **Completion Check**:
    - After completing a task, check: are ALL tasks in the Task Matrix now `completed`?
    - **Parallel mode**: If an `## Orchestrator Assignment` block is present in your prompt
      with `- **Mode**: parallel`, skip this step entirely. The orchestrator handles
-     verification triggers after all parallel agents in the batch complete.
-   - If yes (sequential mode only): set Overall Status to `VERIFICATION_PENDING` (NOT `MISSION_COMPLETE`). Append to `.ralph/progress.md`: `- **[YYYY-MM-DD HH:MM]** (Iteration N) chore: All tasks completed. Verification iteration required next.` Proceed to Mandatory Exit.
+     council triggers after all parallel agents in the batch complete.
+   - If yes (sequential mode only): set Overall Status to `COUNCIL_PENDING` (NOT `MISSION_COMPLETE` or `VERIFICATION_PENDING`). Append to `.ralph/progress.md`: `- **[YYYY-MM-DD HH:MM]** (Iteration N) chore: All tasks completed. Council review required next.` Proceed to Mandatory Exit.
    - If no: proceed to Step 6 (Update Spec) normally.
 
 5. **Verification Iteration**:
-   - Activates ONLY when Task Selection detects all tasks `completed` and Overall Status is `VERIFICATION_PENDING`.
+   - Activates ONLY when Task Selection detects all tasks `completed` and Overall Status is `VERIFICATION_PENDING`. (Council review has already run before this point.)
    - Walk through EACH Acceptance Criterion and verify it is genuinely satisfied:
      - Run tests if criteria mention tests passing.
      - Check file existence, output correctness, or code quality as criteria dictate.

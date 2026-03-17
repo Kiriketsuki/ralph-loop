@@ -84,13 +84,19 @@ if (-not (Test-Path $LogDir)) {
 
 # --- Build full prompt ---
 function Build-Prompt {
+    param([switch]$Council)
     $content = ""
     if (Test-Path $GuardrailsFile) {
         $content = (Get-Content $GuardrailsFile -Raw) + "`n---`n"
     }
-    $promptContent = Get-Content $PromptFile -Raw
-    if ($Mode -eq "plan-work") {
-        $promptContent = $promptContent -replace [regex]::Escape('$WORK_SCOPE'), $WorkScope
+    if ($Council) {
+        $chosenFile = ".ralph/prompts/council.md"
+        $promptContent = Get-Content $chosenFile -Raw
+    } else {
+        $promptContent = Get-Content $PromptFile -Raw
+        if ($Mode -eq "plan-work") {
+            $promptContent = $promptContent -replace [regex]::Escape('$WORK_SCOPE'), $WorkScope
+        }
     }
     $content += $promptContent
     if (Test-Path $AgentsFile) {
@@ -173,7 +179,8 @@ while ($true) {
     Write-Host "--- Iteration $Iteration ---"
 
     $LogFile    = "$LogDir/iteration_$Iteration.log"
-    $FullPrompt = Build-Prompt
+    $IsCouncil  = Select-String -Path $SpecFile -Pattern '\*\*Overall Status\*\*:.*COUNCIL_PENDING' -Quiet
+    $FullPrompt = if ($IsCouncil) { Build-Prompt -Council } else { Build-Prompt }
 
     # Snapshot pending task count before invocation for plan-work completion detection.
     $PendingBefore = (Select-String -Path $SpecFile -Pattern '\|\s*pending\s*\|' -AllMatches |
@@ -332,6 +339,25 @@ while ($true) {
         exit 0
     }
 
+    # --- COUNCIL_PENDING: if council agent did not update status, advance to VERIFICATION_PENDING ---
+    if ($IsCouncil -and (Select-String -Path $SpecFile -Pattern '\*\*Overall Status\*\*:.*COUNCIL_PENDING' -Quiet)) {
+        Write-Host "Council iteration: no status update — advancing to VERIFICATION_PENDING."
+        $specContent = Get-Content $SpecFile -Raw
+        $specContent = $specContent -replace '\*\*Overall Status\*\*: COUNCIL_PENDING', '**Overall Status**: VERIFICATION_PENDING'
+        Set-Content $SpecFile $specContent
+        $now = Get-Date -Format "yyyy-MM-dd HH:mm"
+        Add-Content ".ralph/progress.md" "- **[$now]** (Iteration $Iteration) chore: Council did not respond — defaulting to VERIFICATION_PENDING."
+        git add ".ralph/spec.md" ".ralph/progress.md"
+        git commit -m "chore(ralph): council no-response fallback -> VERIFICATION_PENDING"
+        if ($Push) { git push origin $Branch }
+    }
+
+    # --- COUNCIL_PENDING check: council iteration complete, continue to next ---
+    if (Select-String -Path $SpecFile -Pattern '\*\*Overall Status\*\*:.*COUNCIL_PENDING' -Quiet) {
+        Write-Host "Council iteration $Iteration complete. Continuing..."
+        continue
+    }
+
     # --- VERIFICATION_PENDING check (anchored to Overall Status field) ---
     if (Select-String -Path $SpecFile -Pattern '\*\*Overall Status\*\*:.*VERIFICATION_PENDING' -Quiet) {
         Write-Host "Verification iteration triggered. Agent will verify acceptance criteria..."
@@ -343,6 +369,20 @@ while ($true) {
         if (Select-String -Path $SpecFile -Pattern '\|\s*proposed\s*\|' -Quiet) {
             Write-Error "PAUSED: Proposed tasks require human review. Promote to 'pending' and re-run."
             exit 3
+        }
+        # If all tasks completed with no failures, trigger council review
+        if (-not (Select-String -Path $SpecFile -Pattern '\|\s*failed\s*\|' -Quiet) `
+            -and -not (Select-String -Path $SpecFile -Pattern '\*\*Overall Status\*\*:.*(COUNCIL_PENDING|VERIFICATION_PENDING)' -Quiet)) {
+            Write-Host "All tasks in terminal states. Triggering COUNCIL_PENDING..."
+            $specContent = Get-Content $SpecFile -Raw
+            $specContent = $specContent -replace '\*\*Overall Status\*\*: IN_PROGRESS', '**Overall Status**: COUNCIL_PENDING'
+            Set-Content $SpecFile $specContent
+            $now = Get-Date -Format "yyyy-MM-dd HH:mm"
+            Add-Content ".ralph/progress.md" "- **[$now]** (Iteration $Iteration) chore: All tasks completed or blocked. Council review required."
+            git add ".ralph/spec.md" ".ralph/progress.md"
+            git commit -m "chore(ralph): trigger council review (all tasks terminal)"
+            if ($Push) { git push origin $Branch }
+            continue
         }
         Write-Host "WARNING: No pending tasks remain but mission is not complete. Stopping loop." -ForegroundColor Yellow
         exit 2

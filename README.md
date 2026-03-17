@@ -204,7 +204,8 @@ On gutter detection, the loop exits with code 4 and prints a human review prompt
 | Value | Meaning |
 |:---|:---|
 | `IN_PROGRESS` | Loop is active |
-| `VERIFICATION_PENDING` | All tasks completed; agent will verify acceptance criteria next iteration |
+| `COUNCIL_PENDING` | All tasks completed; adversarial council review runs next |
+| `VERIFICATION_PENDING` | Council approved; agent will verify acceptance criteria next iteration |
 | `MISSION_COMPLETE` | All acceptance criteria met; loop exits on next check |
 
 ### Task Status values
@@ -298,6 +299,23 @@ Higher score = selected first. Within equal scores, lowest task ID wins. If a pa
 | Proposed tasks need review | `3` | Agent discovered new tasks; promote `proposed` to `pending` and re-run |
 | Gutter detected | `4` | Agent in a stuck loop; review `progress.md` for repeated patterns |
 | Ctrl+C / SIGTERM | `130` | Manual interruption; safe to re-run |
+
+---
+
+## Council Review Phase
+
+After all tasks reach a terminal state, the loop enters `COUNCIL_PENDING` before verification. The loop invokes the council agent using `prompts/council.md` instead of `prompts/build.md`.
+
+The council agent:
+- Reads the full audit trail (`progress.md`) and the actual output files
+- Runs tests and linters adversarially
+- Looks for gaps not captured in the original spec: missing edge cases, security issues, constraint violations, incomplete implementations
+
+**Council approves (no gaps found)**: Sets Overall Status to `VERIFICATION_PENDING`. The verification iteration runs next.
+
+**Council finds gaps**: Adds new `pending` tasks directly to the Task Matrix and sets Overall Status back to `IN_PROGRESS`. The loop resumes and runs the new tasks. When they complete, the council reviews again. This repeats until the council issues an unconditional approval.
+
+**Fallback**: If the council agent exits without updating Overall Status (e.g. token rotate), the loop automatically advances to `VERIFICATION_PENDING` to prevent infinite looping.
 
 ---
 

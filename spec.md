@@ -41,6 +41,10 @@
 - **Last Update**: [YYYY-MM-DD HH:MM]
 - **Task Selection Mode**: scored
 
+<!-- Overall Status flow: IN_PROGRESS → COUNCIL_PENDING → VERIFICATION_PENDING → MISSION_COMPLETE -->
+<!-- COUNCIL_PENDING: set when all tasks complete; loop invokes adversarial council review -->
+<!-- VERIFICATION_PENDING: set by council when it approves; loop runs final acceptance criteria check -->
+
 ## Acceptance Criteria for Exit
 > These criteria are verified in a dedicated verification iteration after all tasks complete. The agent must not set MISSION_COMPLETE without passing verification.
 

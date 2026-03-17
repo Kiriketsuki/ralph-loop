@@ -255,6 +255,28 @@ $(cat "$AGENTS_FILE")"
     printf '%s' "$PROMPT_CONTENT"
 }
 
+# --- Build council prompt (guardrails + council.md + agents.md) ---
+build_council_prompt() {
+    local COUNCIL_FILE=".ralph/prompts/council.md"
+    local PROMPT_CONTENT=""
+
+    if [ -f "$GUARDRAILS_FILE" ]; then
+        PROMPT_CONTENT="$(cat "$GUARDRAILS_FILE")
+---
+"
+    fi
+
+    PROMPT_CONTENT="${PROMPT_CONTENT}$(cat "$COUNCIL_FILE")"
+
+    if [ -f "$AGENTS_FILE" ]; then
+        PROMPT_CONTENT="${PROMPT_CONTENT}
+---
+$(cat "$AGENTS_FILE")"
+    fi
+
+    printf '%s' "$PROMPT_CONTENT"
+}
+
 # Extract commit type and summary from a progress.md line.
 # Sets COMMIT_TYPE and COMMIT_SUMMARY in the caller's scope.
 extract_commit_parts() {
@@ -872,6 +894,60 @@ while true; do
         exit 1
     fi
 
+    # --- COUNCIL_PENDING: run adversarial council review before verification ---
+    if grep -qE "\*\*Overall Status\*\*:\s*COUNCIL_PENDING" "$SPEC_FILE"; then
+        COUNCIL_ITERATION=$((BASE_ITERATION + 1))
+        echo "--- Council Iteration $COUNCIL_ITERATION ---"
+        COUNCIL_LOG="${LOG_DIR}/iteration_${COUNCIL_ITERATION}.log"
+        COUNCIL_PROMPT=$(build_council_prompt)
+
+        invoke_engine "$COUNCIL_PROMPT" "$COUNCIL_LOG"
+        COUNCIL_EXIT=$?
+
+        if [ "$COUNCIL_EXIT" -eq 10 ]; then
+            echo "Token rotate during council review: treating as clean iteration end."
+        elif [ "$COUNCIL_EXIT" -ne 0 ]; then
+            echo "WARNING: Council agent exited with code $COUNCIL_EXIT." >&2
+        fi
+
+        reconcile_spec "$BASE_ITERATION" 1
+
+        if [ -n "$(git status --porcelain)" ]; then
+            PROGRESS_LINE=$(grep -m1 "(Iteration ${COUNCIL_ITERATION})" ".ralph/progress.md" 2>/dev/null || true)
+            extract_commit_parts "$PROGRESS_LINE"
+            COMMIT_TYPE=${COMMIT_TYPE:-"chore"}
+            SAFE_SUMMARY=$(printf '%s' "${COMMIT_SUMMARY:-"Iteration ${COUNCIL_ITERATION} council review"}" | tr -d '`$')
+            git add -u
+            git add .ralph/spec.md .ralph/progress.md .ralph/changelog.md .ralph/agents.md \
+                .ralph/logs/ .ralph/specs/ 2>/dev/null || true
+            printf '%s\n' "${COMMIT_TYPE}(ralph): ${SAFE_SUMMARY}" | git commit -F -
+            if [ "$PUSH_CHANGES" = "true" ]; then
+                git push origin "$BRANCH"
+            fi
+        fi
+
+        # If the council agent did not update status (e.g. token rotate), advance to
+        # VERIFICATION_PENDING as a safe default to avoid an infinite council loop.
+        if grep -qE "\*\*Overall Status\*\*:\s*COUNCIL_PENDING" "$SPEC_FILE"; then
+            echo "Council iteration: no status update — advancing to VERIFICATION_PENDING."
+            sedi 's/\*\*Overall Status\*\*: COUNCIL_PENDING/\*\*Overall Status\*\*: VERIFICATION_PENDING/' ".ralph/spec.md"
+            echo "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${COUNCIL_ITERATION}) chore: Council did not respond — defaulting to VERIFICATION_PENDING." >> ".ralph/progress.md"
+            if [ -n "$(git status --porcelain)" ]; then
+                git add .ralph/spec.md .ralph/progress.md
+                git commit -m "chore(ralph): council no-response fallback → VERIFICATION_PENDING"
+                [ "$PUSH_CHANGES" = "true" ] && git push origin "$BRANCH"
+            fi
+        fi
+
+        if [ -f "$GUTTER" ] && ! RALPH_GUTTER_LOOKBACK=$((MAX_PARALLEL * 3)) bash "$GUTTER"; then
+            echo "GUTTER DETECTED during council review. Human review needed." >&2
+            exit 4
+        fi
+
+        echo "Council iteration complete. Continuing..."
+        continue
+    fi
+
     # --- VERIFICATION_PENDING: run a single sequential verification agent ---
     if grep -qE "\*\*Overall Status\*\*:\s*VERIFICATION_PENDING" "$SPEC_FILE"; then
         VERIFY_ITERATION=$((BASE_ITERATION + 1))
@@ -934,21 +1010,21 @@ while true; do
             echo "PAUSED: Proposed tasks require human review. Promote to 'pending' and re-run." >&2
             exit 3
         fi
-        # If all tasks are in terminal states (completed/blocked/failed) but VERIFICATION_PENDING
+        # If all tasks are in terminal states (completed/blocked/failed) but COUNCIL_PENDING
         # has not been set yet, trigger it now. This handles batches where some tasks ended up
         # blocked/failed — the loop would otherwise spin or exit with code 2 incorrectly.
         if ! grep -qE "\| *(pending|proposed) *\|" "$SPEC_FILE" \
-            && ! grep -qE "\*\*Overall Status\*\*:\s*VERIFICATION_PENDING" "$SPEC_FILE"; then
+            && ! grep -qE "\*\*Overall Status\*\*:\s*(COUNCIL_PENDING|VERIFICATION_PENDING)" "$SPEC_FILE"; then
             if grep -qE "\| *failed *\|" "$SPEC_FILE"; then
                 echo "WARNING: Tasks in 'failed' state remain unresolved. Human review needed." >&2
                 exit 2
             fi
-            echo "All tasks in terminal states. Triggering VERIFICATION_PENDING..."
-            sedi 's/\*\*Overall Status\*\*: IN_PROGRESS/\*\*Overall Status\*\*: VERIFICATION_PENDING/' ".ralph/spec.md"
-            echo "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${BASE_ITERATION}) chore: All tasks completed or blocked. Verification required." >> ".ralph/progress.md"
+            echo "All tasks in terminal states. Triggering COUNCIL_PENDING..."
+            sedi 's/\*\*Overall Status\*\*: IN_PROGRESS/\*\*Overall Status\*\*: COUNCIL_PENDING/' ".ralph/spec.md"
+            echo "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration ${BASE_ITERATION}) chore: All tasks completed or blocked. Council review required." >> ".ralph/progress.md"
             git add -u
             git add .ralph/spec.md .ralph/progress.md 2>/dev/null || true
-            git commit -m "chore(ralph): trigger verification (all tasks terminal)"
+            git commit -m "chore(ralph): trigger council review (all tasks terminal)"
             [ "$PUSH_CHANGES" = "true" ] && git push origin "$BRANCH"
             continue
         fi
@@ -1110,15 +1186,15 @@ while true; do
     # Snapshot completed count after merges + parent auto-completion for circuit breaker signal
     COMPLETED_AFTER=$(grep -cE '\| *completed *\|' "$SPEC_FILE" 2>/dev/null || echo 0)
 
-    # Check if all tasks are done — set VERIFICATION_PENDING for the next iteration
+    # Check if all tasks are done — set COUNCIL_PENDING for the next iteration
     if ! grep -qE "\| *pending *\|" "$SPEC_FILE" \
         && ! grep -qE "\| *failed *\|" "$SPEC_FILE" \
-        && ! grep -qE "\*\*Overall Status\*\*:\s*VERIFICATION_PENDING" "$SPEC_FILE" \
+        && ! grep -qE "\*\*Overall Status\*\*:\s*(COUNCIL_PENDING|VERIFICATION_PENDING)" "$SPEC_FILE" \
         && ! grep -qE "\*\*Overall Status\*\*:\s*MISSION_COMPLETE" "$SPEC_FILE" \
         && ! grep -qE "\| *proposed *\|" "$SPEC_FILE"; then
-        echo "All tasks completed. Triggering VERIFICATION_PENDING..."
-        sedi 's/\*\*Overall Status\*\*: IN_PROGRESS/\*\*Overall Status\*\*: VERIFICATION_PENDING/' ".ralph/spec.md"
-        echo "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration $((BASE_ITERATION + N_MERGED))) chore: All tasks completed. Verification iteration required next." >> ".ralph/progress.md"
+        echo "All tasks completed. Triggering COUNCIL_PENDING..."
+        sedi 's/\*\*Overall Status\*\*: IN_PROGRESS/\*\*Overall Status\*\*: COUNCIL_PENDING/' ".ralph/spec.md"
+        echo "- **[$(date '+%Y-%m-%d %H:%M')]** (Iteration $((BASE_ITERATION + N_MERGED))) chore: All tasks completed. Council review required next." >> ".ralph/progress.md"
     fi
 
     # Commit all batch results (reconciled spec + progress + any remaining changes)
