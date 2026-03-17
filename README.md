@@ -155,6 +155,21 @@ Examples:
 
 ---
 
+## Security Constraints
+
+`loop.sh` enforces path restrictions on the two file paths it writes to prevent directory traversal:
+
+| Variable | Constraint | Exception |
+|:---|:---|:---|
+| `LOG_FILE` | Must be a relative path starting with `.ralph/` | `/dev/null` is explicitly allowed |
+| `PROGRESS_FILE` | Must be a relative path starting with `.ralph/` | None |
+
+Both variables are rejected if they contain `..` or start with `/`. These checks run in `stream/parser.sh` and `stream/gutter.sh` respectively, before any file I/O. If validation fails the script exits with code `1` and prints a descriptive error to stderr.
+
+You do not need to set these variables manually — `loop.sh` derives them from the project directory. The constraints apply when overriding the defaults via environment variables.
+
+---
+
 ## Token Awareness
 
 All engine output is piped through `stream/parser.sh`, which estimates token usage (~4 chars/token). Configure thresholds via environment variables before running the loop:
