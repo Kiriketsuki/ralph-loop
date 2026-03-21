@@ -1,0 +1,71 @@
+name: "[Feature] Feature Request"
+description: Suggest a new feature or enhancement
+title: "[Feature]: "
+labels: ["feature"]
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Thanks for taking the time to suggest a new feature! Feature branches bump the **Minor** version (3rd digit: YY.X.**Y**.0). The target branch will be rebased before merge to ensure a linear history.
+
+              **Hierarchical Workflow**: If this feature belongs to a specific Epic, add it as a sub-issue to that Epic for automatic parent tracking.
+
+    - type: textarea
+      id: problem
+      attributes:
+          label: Is your feature request related to a problem?
+          description: A clear and concise description of what the problem is.
+          placeholder: I'm always frustrated when...
+      validations:
+          required: false
+
+    - type: textarea
+      id: solution
+      attributes:
+          label: Describe the solution you'd like
+          description: A clear and concise description of what you want to happen.
+          placeholder: I would like to see...
+      validations:
+          required: true
+
+    - type: dropdown
+      id: priority
+      attributes:
+          label: Priority
+          description: How important is this feature?
+          options:
+              - Low - Nice to have
+              - Medium - Would improve workflow
+              - High - Blocking development or testing
+          default: 0
+      validations:
+          required: false
+
+    - type: textarea
+      id: alternatives
+      attributes:
+          label: Alternatives considered
+          description: Any alternative approaches you've thought about.
+          placeholder: Instead of this, we could also...
+      validations:
+          required: false
+
+    - type: textarea
+      id: use-case
+      attributes:
+          label: Use Case / User Story
+          description: Describe a specific scenario where this feature would help.
+          placeholder: |
+              As a [user type],
+              I want to [action],
+              So that [benefit].
+      validations:
+          required: false
+
+    - type: textarea
+      id: additional
+      attributes:
+          label: Additional context
+          description: Any other context, mockups, or technical considerations.
+      validations:
+          required: false
