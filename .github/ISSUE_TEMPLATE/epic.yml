@@ -1,0 +1,51 @@
+name: "[Epic] Epic"
+description: Large initiative spanning multiple features
+title: "[Epic]: "
+labels: ["epic"]
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Epics are large initiatives that span multiple features within this repo. Epic branches target `main` and when merged bump the **Major** version (2nd digit: YY.**X**.0.0).
+
+              Features and tasks tracked inside an Epic will automatically branch from the epic branch.
+
+    - type: textarea
+      id: description
+      attributes:
+          label: Description
+          description: High-level description of the epic and its goals.
+          placeholder: What is this epic about?
+      validations:
+          required: true
+
+    - type: textarea
+      id: scope
+      attributes:
+          label: Scope
+          description: List the features, tasks, or changes included in this epic.
+          placeholder: |
+              - [ ] Feature 1
+              - [ ] Feature 2
+              - [ ] Task 1
+      validations:
+          required: true
+
+    - type: textarea
+      id: acceptance_criteria
+      attributes:
+          label: Acceptance Criteria
+          description: When is this epic considered done?
+          placeholder: |
+              - [ ] All features merged
+              - [ ] Tests passing
+      validations:
+          required: true
+
+    - type: textarea
+      id: additional
+      attributes:
+          label: Additional context
+          description: Any other context, links, or technical notes.
+      validations:
+          required: false
