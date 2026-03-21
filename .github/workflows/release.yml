@@ -1,0 +1,114 @@
+name: Release Management
+
+on:
+    pull_request:
+        branches:
+            - release
+        types: [closed]
+
+jobs:
+    create-release:
+        if: github.event.pull_request.merged == true
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  ref: release
+                  fetch-depth: 0
+
+            - name: Read version
+              id: get_version
+              run: |
+                  if [ ! -f VERSION ]; then
+                    echo "Error: No VERSION file found"
+                    exit 1
+                  fi
+
+                  VERSION=$(cat VERSION | tr -d '[:space:]')
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+                  echo "Creating release for version: $VERSION"
+
+                  # Parse version components
+                  if [[ $VERSION =~ ^([0-9]{2})\.([0-9]+)\.([0-9]+)\.([0-9]+)([a-zA-Z]*)$ ]]; then
+                    YY="${BASH_REMATCH[1]}"
+                    MAJOR="${BASH_REMATCH[2]}"
+                    MINOR="${BASH_REMATCH[3]}"
+                    PATCH="${BASH_REMATCH[4]}"
+                    SUFFIX="${BASH_REMATCH[5]}"
+                    echo "year=20$YY" >> $GITHUB_OUTPUT
+                    echo "major=$MAJOR" >> $GITHUB_OUTPUT
+                    echo "minor=$MINOR" >> $GITHUB_OUTPUT
+                    echo "patch=$PATCH" >> $GITHUB_OUTPUT
+                  fi
+
+            - name: Sync VERSION from main
+              run: |
+                  git fetch origin main
+                  MAIN_VERSION=$(git show origin/main:VERSION | tr -d '[:space:]')
+                  RELEASE_VERSION=$(cat VERSION | tr -d '[:space:]')
+
+                  if [ "$MAIN_VERSION" != "$RELEASE_VERSION" ]; then
+                    echo "Syncing VERSION from main: $MAIN_VERSION"
+                    echo "$MAIN_VERSION" > VERSION
+
+                    if [ -f package.json ]; then
+                      sed -i "s/\"version\": \".*\"/\"version\": \"$MAIN_VERSION\"/" package.json
+                    fi
+
+                    find . -maxdepth 4 -name "pyproject.toml" \
+                      -not -path "*/node_modules/*" \
+                      -not -path "*/.pio/*" \
+                      -not -path "*/vendor/*" \
+                      -not -path "*/.venv/*" | while read -r f; do
+                      if grep -q '^version' "$f"; then
+                        sed -i "s/^version = \".*\"/version = \"$MAIN_VERSION\"/" "$f"
+                      fi
+                    done
+
+                    git config user.name "github-actions[bot]"
+                    git config user.email "github-actions[bot]@users.noreply.github.com"
+                    git add -A
+                    git diff --cached --quiet || {
+                      git commit -m "ci: sync version $MAIN_VERSION from main [skip ci]"
+                      git push origin release
+                    }
+
+                    echo "version=$MAIN_VERSION" >> $GITHUB_OUTPUT
+                  fi
+
+            - name: Create git tag
+              run: |
+                  VERSION=$(cat VERSION | tr -d '[:space:]')
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+
+                  if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+                    echo "Tag v$VERSION already exists, skipping."
+                  else
+                    git tag -a "v$VERSION" -m "Release version $VERSION"
+                    git push origin "v$VERSION"
+                  fi
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: v${{ steps.get_version.outputs.version }}
+                  name: Release v${{ steps.get_version.outputs.version }}
+                  body: |
+                      ## Release v${{ steps.get_version.outputs.version }}
+
+                      **Version**: `${{ steps.get_version.outputs.version }}`
+                      **Year**: ${{ steps.get_version.outputs.year }}
+
+                      ### Version Components
+                      - **Epics (Major)**: ${{ steps.get_version.outputs.major }}
+                      - **Features (Minor)**: ${{ steps.get_version.outputs.minor }}
+                      - **Tasks/Bugs (Patch)**: ${{ steps.get_version.outputs.patch }}
+
+                      ### Changes
+                      ${{ github.event.pull_request.body }}
+                  draft: false
+                  prerelease: false

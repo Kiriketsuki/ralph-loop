@@ -1,0 +1,99 @@
+name: Version Validation
+
+on:
+    pull_request:
+        branches:
+            - main
+            - release
+            - "epic/**"
+        types: [opened, synchronize, reopened]
+
+jobs:
+    validate-version:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
+            - name: Validate VERSION file exists and format
+              id: check_version
+              run: |
+                  if [ ! -f VERSION ]; then
+                    echo "Error: No VERSION file found."
+                    exit 1
+                  fi
+
+                  VERSION=$(cat VERSION | tr -d '[:space:]')
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+                  # Validate format: YY.Major.Minor.Patch[Suffix]
+                  if ! echo "$VERSION" | grep -qE '^[0-9]{2}\.[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z]*$'; then
+                    echo "Error: Version '$VERSION' does not match YY.Major.Minor.Patch[Suffix]"
+                    echo "Examples: 26.0.0.0, 26.3.2.1, 26.3.2.1a"
+                    exit 1
+                  fi
+
+                  echo "VERSION file valid: $VERSION"
+
+            - name: Validate package.json version matches VERSION (if exists)
+              run: |
+                  if [ ! -f package.json ]; then
+                    echo "No package.json found, skipping."
+                    exit 0
+                  fi
+
+                  VERSION_FILE=$(cat VERSION | tr -d '[:space:]')
+                  PACKAGE_VERSION=$(grep -oP '"version"\s*:\s*"\K[^"]+' package.json)
+
+                  if [ "$VERSION_FILE" != "$PACKAGE_VERSION" ]; then
+                    echo "Error: VERSION ($VERSION_FILE) does not match package.json ($PACKAGE_VERSION)"
+                    exit 1
+                  fi
+
+                  echo "package.json version matches: $VERSION_FILE"
+
+            - name: Validate pyproject.toml versions match VERSION (if any exist)
+              run: |
+                  VERSION_FILE=$(cat VERSION | tr -d '[:space:]')
+
+                  find . -maxdepth 4 -name "pyproject.toml" \
+                    -not -path "*/node_modules/*" \
+                    -not -path "*/.pio/*" \
+                    -not -path "*/vendor/*" \
+                    -not -path "*/.venv/*" | while read -r f; do
+                    PYVERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' "$f" || true)
+                    if [ -n "$PYVERSION" ] && [ "$PYVERSION" != "$VERSION_FILE" ]; then
+                      echo "Error: VERSION ($VERSION_FILE) does not match $f ($PYVERSION)"
+                      exit 1
+                    fi
+                  done
+
+                  echo "All pyproject.toml versions match (or none found)."
+
+            - name: Compare with latest tag (PRs to release only)
+              if: github.base_ref == 'release'
+              run: |
+                  git fetch --tags --force 2>/dev/null || true
+                  LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+                  VERSION="${{ steps.check_version.outputs.version }}"
+
+                  if [ -n "$LATEST_TAG" ]; then
+                    LATEST_VERSION="${LATEST_TAG#v}"
+                    if [ "$VERSION" = "$LATEST_VERSION" ]; then
+                      echo "Error: Version $VERSION is the same as latest tag $LATEST_TAG"
+                      exit 1
+                    fi
+                    echo "Version $VERSION differs from latest tag $LATEST_TAG"
+                  else
+                    echo "No previous tags found, skipping comparison."
+                  fi
+
+            - name: Summary
+              run: |
+                  echo "## Version Validation Summary" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Target Branch**: ${{ github.base_ref }}" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Version**: ${{ steps.check_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Status**: Passed" >> $GITHUB_STEP_SUMMARY

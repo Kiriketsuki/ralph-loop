@@ -1,0 +1,37 @@
+name: "Sanitize Branch Name"
+description: "Sanitizes an issue title for use as a branch name"
+inputs:
+    issue-number:
+        description: "Issue number"
+        required: true
+    issue-title:
+        description: "Issue title"
+        required: true
+    prefix:
+        description: "Branch prefix (e.g., epic, feature, task, bug, hotfix)"
+        required: true
+outputs:
+    branch-name:
+        description: "Sanitized branch name"
+        value: ${{ steps.sanitize.outputs.branch-name }}
+runs:
+    using: "composite"
+    steps:
+        - id: sanitize
+          shell: bash
+          run: |
+              ISSUE_TITLE="${{ inputs.issue-title }}"
+              SANITIZED_TITLE=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+              BRANCH_NAME="${{ inputs.prefix }}/${{ inputs.issue-number }}-${SANITIZED_TITLE}"
+
+              # Truncate branch name if too long (max 100 chars)
+              if [ ${#BRANCH_NAME} -gt 100 ]; then
+                BRANCH_NAME="${BRANCH_NAME:0:100}"
+                BRANCH_NAME=$(echo "$BRANCH_NAME" | sed 's/-*$//')
+                if [[ "$BRANCH_NAME" == "${{ inputs.prefix }}/${{ inputs.issue-number }}" ]] || [[ "$BRANCH_NAME" == "${{ inputs.prefix }}/${{ inputs.issue-number }}-" ]]; then
+                  BRANCH_NAME="${{ inputs.prefix }}/${{ inputs.issue-number }}-issue"
+                fi
+              fi
+
+              echo "branch-name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+              echo "Branch name: $BRANCH_NAME"
