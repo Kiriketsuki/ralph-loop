@@ -1,0 +1,39 @@
+name: "[Task] Task"
+description: Create a task for a specific piece of work
+title: "[Task]: "
+labels: ["task"]
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Create a task to track a specific piece of work. Task branches bump the **Patch** version (4th digit: YY.X.Y.**Z**). The target branch will be rebased before merge to ensure a linear history.
+
+              Sub-issues (features or bugs) tracked inside a Task will automatically branch from the task branch.
+
+    - type: textarea
+      id: description
+      attributes:
+          label: Description
+          description: A clear and concise description of the task.
+          placeholder: What needs to be done?
+      validations:
+          required: true
+
+    - type: textarea
+      id: acceptance_criteria
+      attributes:
+          label: Acceptance Criteria
+          description: List the criteria that must be met for this task to be considered complete.
+          placeholder: |
+              - [ ] Criterion 1
+              - [ ] Criterion 2
+      validations:
+          required: true
+
+    - type: textarea
+      id: additional
+      attributes:
+          label: Additional context
+          description: Any other context, links, or technical notes.
+      validations:
+          required: false
