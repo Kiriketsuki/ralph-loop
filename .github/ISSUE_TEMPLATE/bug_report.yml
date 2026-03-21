@@ -1,0 +1,66 @@
+name: "[Bug] Bug Report"
+description: Report a bug or unexpected behavior
+title: "[Bug]: "
+labels: ["bug"]
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Thanks for taking the time to report this bug! Bug branches bump the **Patch** version (4th digit: YY.X.Y.**Z**). The target branch will be rebased before merge to ensure a linear history.
+
+              **Hierarchical Workflow**: If this bug is related to a specific Feature or Task, add it as a sub-issue to that issue for automatic parent tracking.
+
+    - type: textarea
+      id: description
+      attributes:
+          label: Describe the bug
+          description: A clear and concise description of what the bug is.
+          placeholder: Tell us what went wrong...
+      validations:
+          required: true
+
+    - type: textarea
+      id: reproduction
+      attributes:
+          label: Steps to reproduce
+          placeholder: |
+              1. Do X
+              2. ...
+              3. See error
+      validations:
+          required: false
+
+    - type: textarea
+      id: expected
+      attributes:
+          label: Expected behavior
+          description: What you expected to happen instead.
+      validations:
+          required: true
+
+    - type: dropdown
+      id: os
+      attributes:
+          label: Operating System
+          options:
+              - Linux
+              - macOS
+              - Windows
+              - Other
+      validations:
+          required: false
+
+    - type: textarea
+      id: logs
+      attributes:
+          label: Logs or error output
+          description: Paste relevant logs or terminal errors here.
+          render: shell
+
+    - type: textarea
+      id: additional
+      attributes:
+          label: Additional context
+          description: Any other context about the problem.
+      validations:
+          required: false
