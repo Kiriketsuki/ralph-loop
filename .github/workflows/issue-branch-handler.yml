@@ -33,6 +33,37 @@ jobs:
                   script: |
                       const labels = context.payload.issue.labels.map(l => l.name);
 
+                      // Parse "Branch off" override from issue body. Two accepted forms:
+                      //
+                      // 1. Inline magic line (free-form issues, manual edits):
+                      //      Branch off: feature/149-new-trip-flow
+                      //      **Branch off:** `feature/149-new-trip-flow`
+                      //
+                      // 2. Issue Form rendering — when an input field labelled "Branch off"
+                      //    is filled in, GitHub renders it as a markdown heading followed
+                      //    by the value on subsequent lines:
+                      //      ### Branch off
+                      //
+                      //      feature/149-new-trip-flow
+                      //
+                      // Case-insensitive. First match wins. Empty / "main" / "_No response_"
+                      // are treated as "no override" (default fallback applies).
+                      const issueBody = context.payload.issue.body || '';
+                      const inlineRe = /(?:^|\n)\s*\**\s*branch\s*off\s*:\**\s*[`'"]?\s*([A-Za-z0-9._/\-]+)\s*[`'"]?\s*(?:\r?\n|$)/i;
+                      const headingRe = /(?:^|\n)\s*#{1,6}\s*branch\s*off\s*\r?\n+\s*[`'"]?\s*([A-Za-z0-9._/\-]+)\s*[`'"]?\s*(?:\r?\n|$)/i;
+                      const branchOffMatch = issueBody.match(inlineRe) || issueBody.match(headingRe);
+                      let branchOffOverride = '';
+                      if (branchOffMatch && branchOffMatch[1]) {
+                          const candidate = branchOffMatch[1].trim();
+                          if (candidate && !/^(main|master|none|n\/a|-|_no_response_)$/i.test(candidate)) {
+                              branchOffOverride = candidate;
+                              console.log(`Detected Branch off override: ${branchOffOverride}`);
+                          } else {
+                              console.log(`Branch off value '${candidate}' treated as default (main).`);
+                          }
+                      }
+                      core.setOutput('branch_off_override', branchOffOverride);
+
                       // Priority order: epic > feature > task > bug > hotfix
                       let prefix = 'feature';
                       let prLabel = 'addition';
@@ -126,34 +157,55 @@ jobs:
                   PARENT_EXISTS: ${{ steps.config.outputs.parent_exists }}
                   PARENT_BRANCH_NAME: ${{ steps.sanitize-parent.outputs.branch-name }}
                   CURRENT_PREFIX: ${{ steps.config.outputs.prefix }}
+                  BRANCH_OFF_OVERRIDE: ${{ steps.config.outputs.branch_off_override }}
               run: |
-                  # Hierarchy enforcement:
-                  # epic -> always from main
-                  # feature -> from epic branch (if parent is epic), else main
-                  # task -> from feature/epic branch (if parent), else main
-                  # bug/hotfix -> standalone, always from main
+                  # Resolution order:
+                  # 1. Explicit "Branch off: <branch>" line in issue body (highest priority).
+                  #    Falls back to hierarchy/main if the named branch does not exist on origin.
+                  # 2. Hierarchy via tracked-in (sub-issue) parent:
+                  #    epic / hotfix / bug -> main
+                  #    feature / task -> parent branch if parent issue exists, else main
+                  # 3. Default: main
+
+                  git fetch origin --quiet || true
+
+                  if [ -n "$BRANCH_OFF_OVERRIDE" ]; then
+                    if git ls-remote --heads origin "$BRANCH_OFF_OVERRIDE" | grep -q "$BRANCH_OFF_OVERRIDE"; then
+                      echo "Using explicit Branch off override: $BRANCH_OFF_OVERRIDE"
+                      echo "BASE_BRANCH=$BRANCH_OFF_OVERRIDE" >> $GITHUB_ENV
+                      echo "BASE_SOURCE=override" >> $GITHUB_ENV
+                      exit 0
+                    else
+                      echo "::warning::Branch off override '$BRANCH_OFF_OVERRIDE' does not exist on origin. Falling back to hierarchy/main."
+                      echo "BASE_OVERRIDE_MISSING=$BRANCH_OFF_OVERRIDE" >> $GITHUB_ENV
+                    fi
+                  fi
 
                   if [ "$CURRENT_PREFIX" == "epic" ] || [ "$CURRENT_PREFIX" == "hotfix" ]; then
                     echo "BASE_BRANCH=main" >> $GITHUB_ENV
+                    echo "BASE_SOURCE=hierarchy" >> $GITHUB_ENV
                     echo "$CURRENT_PREFIX branches always target main."
                   elif [ "$CURRENT_PREFIX" == "bug" ]; then
                     echo "BASE_BRANCH=main" >> $GITHUB_ENV
+                    echo "BASE_SOURCE=hierarchy" >> $GITHUB_ENV
                     echo "Bug branches target main."
                   elif [ "$PARENT_EXISTS" == "true" ]; then
                     PARENT_BRANCH="$PARENT_BRANCH_NAME"
                     echo "Calculated parent branch: $PARENT_BRANCH"
 
-                    git fetch origin --quiet
                     if git ls-remote --heads origin "$PARENT_BRANCH" | grep -q "$PARENT_BRANCH"; then
                       echo "Parent branch exists."
                       echo "BASE_BRANCH=$PARENT_BRANCH" >> $GITHUB_ENV
+                      echo "BASE_SOURCE=parent" >> $GITHUB_ENV
                     else
                       echo "Parent branch $PARENT_BRANCH does not exist. Falling back to main."
                       echo "BASE_BRANCH=main" >> $GITHUB_ENV
+                      echo "BASE_SOURCE=fallback" >> $GITHUB_ENV
                     fi
                   else
                     echo "No parent issue. Base branch is main."
                     echo "BASE_BRANCH=main" >> $GITHUB_ENV
+                    echo "BASE_SOURCE=default" >> $GITHUB_ENV
                   fi
 
             - name: Sanitize branch name
@@ -284,20 +336,38 @@ jobs:
               env:
                   BRANCH_NAME: ${{ env.BRANCH_NAME }}
                   BASE_BRANCH: ${{ env.BASE_BRANCH }}
+                  BASE_SOURCE: ${{ env.BASE_SOURCE }}
+                  BASE_OVERRIDE_MISSING: ${{ env.BASE_OVERRIDE_MISSING }}
                   PR_NUMBER: ${{ steps.create-pr.outputs.result }}
               with:
                   script: |
                       const branchName = process.env.BRANCH_NAME;
                       const baseBranch = process.env.BASE_BRANCH;
+                      const baseSource = process.env.BASE_SOURCE || 'default';
+                      const overrideMissing = process.env.BASE_OVERRIDE_MISSING || '';
                       const prNumber = process.env.PR_NUMBER;
 
                       if (!prNumber || prNumber === 'null') return;
+
+                      const sourceLabelMap = {
+                        override: 'explicit `Branch off:` override',
+                        parent: 'parent issue (sub-issue tracking)',
+                        hierarchy: 'branch-type hierarchy rule',
+                        fallback: 'fallback (parent branch missing)',
+                        default: 'default'
+                      };
+                      const sourceLabel = sourceLabelMap[baseSource] || baseSource;
+
+                      let warning = '';
+                      if (overrideMissing) {
+                        warning = `\n\n> :warning: The \`Branch off: ${overrideMissing}\` override was ignored because that branch does not exist on origin. Falling back to \`${baseBranch}\`.`;
+                      }
 
                       await github.rest.issues.createComment({
                         issue_number: context.issue.number,
                         owner: context.repo.owner,
                         repo: context.repo.repo,
-                        body: `Branch \`${branchName}\` and PR #${prNumber} created.\n\n- **Branch**: \`${branchName}\`\n- **Base**: \`${baseBranch}\`\n- **PR**: #${prNumber}\n\n\`\`\`bash\ngit fetch origin\ngit checkout ${branchName}\n\`\`\`\n\n<!-- branch-name: ${branchName} -->`
+                        body: `Branch \`${branchName}\` and PR #${prNumber} created.\n\n- **Branch**: \`${branchName}\`\n- **Base**: \`${baseBranch}\` _(via ${sourceLabel})_\n- **PR**: #${prNumber}${warning}\n\n\`\`\`bash\ngit fetch origin\ngit checkout ${branchName}\n\`\`\`\n\n<!-- branch-name: ${branchName} -->`
                       });
 
             - name: Assign issue
