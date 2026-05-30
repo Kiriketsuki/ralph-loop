@@ -87,7 +87,11 @@ jobs:
                   else
                     case "$BUMP_TYPE" in
                       major)
+                        # Reset MINOR and PATCH on a major bump. Forks: do NOT
+                        # carry these over — 26.3.2.1 must become 26.4.0.0, not 26.4.2.1.
                         MAJOR=$((MAJOR + 1))
+                        MINOR=0
+                        PATCH=0
                         SUFFIX=""
                         NEW_VERSION="$YY.$MAJOR.$MINOR.$PATCH"
                         ;;
@@ -108,19 +112,19 @@ jobs:
                         else
                           # Increment suffix as base-26: a..z, aa..az, ba..zz, aaa...
                           SUFFIX=$(python3 -c "
-def inc(s):
-    chars = list(s)
-    i = len(chars) - 1
-    while i >= 0:
-        if chars[i] == 'z':
-            chars[i] = 'a'
-            i -= 1
-        else:
-            chars[i] = chr(ord(chars[i]) + 1)
-            return ''.join(chars)
-    return 'a' + ''.join(chars)
-print(inc('$SUFFIX'))
-")
+                  def inc(s):
+                      chars = list(s)
+                      i = len(chars) - 1
+                      while i >= 0:
+                          if chars[i] == 'z':
+                              chars[i] = 'a'
+                              i -= 1
+                          else:
+                              chars[i] = chr(ord(chars[i]) + 1)
+                              return ''.join(chars)
+                      return 'a' + ''.join(chars)
+                  print(inc('$SUFFIX'))
+                  ")
                         fi
                         NEW_VERSION="$YY.$MAJOR.$MINOR.$PATCH$SUFFIX"
                         ;;
