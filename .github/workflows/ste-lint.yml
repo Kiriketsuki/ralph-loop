@@ -1,0 +1,38 @@
+name: STE Lint
+
+# Lints the PR title, the PR body, each commit message and each changed
+# Markdown file with kilint (Kiriketsuki/agenKic-hub). A kilint error fails
+# the check. A warning only shows. Add a .kilint.toml to route or exempt paths.
+
+on:
+    pull_request:
+        types: [opened, edited, synchronize, reopened]
+
+permissions:
+    contents: read
+
+jobs:
+    ste-lint:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
+            - name: Checkout kilint
+              uses: actions/checkout@v6
+              with:
+                  repository: Kiriketsuki/agenKic-hub
+                  path: .kilint
+                  sparse-checkout: skills/writing/kilint
+
+            - name: Lint the PR title, body, commits and changed docs
+              # The PR text reaches the script through env, never through
+              # an expression in the script text.
+              env:
+                  PR_TITLE: ${{ github.event.pull_request.title }}
+                  PR_BODY: ${{ github.event.pull_request.body }}
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+              run: python3 .kilint/skills/writing/kilint/ci/pr_lint.py
