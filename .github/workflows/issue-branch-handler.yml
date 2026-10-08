@@ -89,19 +89,18 @@ jobs:
                       core.setOutput('prefix', prefix);
                       core.setOutput('pr_label', prLabel);
 
-                      // Check for parent issue via GraphQL sub-issue tracking
+                      // The parent issue comes from the sub-issue link. The old
+                      // trackedInIssues field covers task lists only.
                       const query = `
                         query($owner: String!, $repo: String!, $number: Int!) {
                           repository(owner: $owner, name: $repo) {
                             issue(number: $number) {
-                              trackedInIssues(first: 1) {
-                                nodes {
-                                  number
-                                  title
-                                  labels(first: 10) {
-                                    nodes {
-                                      name
-                                    }
+                              parent {
+                                number
+                                title
+                                labels(first: 10) {
+                                  nodes {
+                                    name
                                   }
                                 }
                               }
@@ -110,34 +109,41 @@ jobs:
                         }
                       `;
 
-                      try {
-                        const result = await github.graphql(query, {
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          number: context.issue.number
-                        });
+                      // The workflow starts on "opened", often before the sub-issue
+                      // link exists. A feature or task waits up to 60 seconds for it.
+                      const isChild = prefix === 'feature' || prefix === 'task';
+                      const tries = isChild && context.payload.action === 'opened' ? 7 : 1;
+                      let parent = null;
 
-                        const parents = result.repository.issue.trackedInIssues.nodes;
-                        if (parents.length > 0) {
-                          const parent = parents[0];
-                          console.log(`Found parent issue: #${parent.number} - ${parent.title}`);
-
-                          const parentLabels = parent.labels.nodes.map(l => l.name);
-                          let parentPrefix = 'feature';
-                          if (parentLabels.includes('epic')) parentPrefix = 'epic';
-                          else if (parentLabels.includes('feature')) parentPrefix = 'feature';
-                          else if (parentLabels.includes('task')) parentPrefix = 'task';
-
-                          core.setOutput('parent_exists', 'true');
-                          core.setOutput('parent_number', parent.number);
-                          core.setOutput('parent_title', parent.title);
-                          core.setOutput('parent_prefix', parentPrefix);
-                        } else {
-                          console.log('No parent issue found.');
-                          core.setOutput('parent_exists', 'false');
+                      for (let i = 0; i < tries && parent === null; i++) {
+                        if (i > 0) await new Promise(resolve => setTimeout(resolve, 10000));
+                        try {
+                          const result = await github.graphql(query, {
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            number: context.issue.number
+                          });
+                          parent = result.repository.issue.parent;
+                        } catch (error) {
+                          console.log('Error querying parent issue:', error.message);
                         }
-                      } catch (error) {
-                        console.log('Error querying parent issue:', error.message);
+                      }
+
+                      if (parent) {
+                        console.log(`Found parent issue: #${parent.number} - ${parent.title}`);
+
+                        const parentLabels = parent.labels.nodes.map(l => l.name);
+                        let parentPrefix = 'feature';
+                        if (parentLabels.includes('epic')) parentPrefix = 'epic';
+                        else if (parentLabels.includes('feature')) parentPrefix = 'feature';
+                        else if (parentLabels.includes('task')) parentPrefix = 'task';
+
+                        core.setOutput('parent_exists', 'true');
+                        core.setOutput('parent_number', parent.number);
+                        core.setOutput('parent_title', parent.title);
+                        core.setOutput('parent_prefix', parentPrefix);
+                      } else {
+                        console.log('No parent issue found.');
                         core.setOutput('parent_exists', 'false');
                       }
 
